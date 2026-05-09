@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { api } from '../utils/api.js';
+import { api, createApiClient } from '../utils/api.js';
 import { findTask } from '../utils/find.js';
 import type { Task } from '../utils/types.js';
+import { DEFAULT_VERITAS_API_BASE, dispatchPendingToHermes } from './hermes-dispatcher.js';
 
 export function registerAgentCommands(program: Command): void {
   // Start agent on task
@@ -128,6 +129,77 @@ export function registerAgentCommands(program: Command): void {
               console.log();
             }
           );
+        }
+      } catch (err) {
+        console.error(chalk.red(`Error: ${(err as Error).message}`));
+        process.exit(1);
+      }
+    });
+
+  // Dispatch pending agent requests through HermesAgent CLI sessions
+  program
+    .command('agents:dispatch')
+    .description('Dispatch pending Veritas agent requests through Hermes CLI')
+    .option('--source <source>', 'api, files, automation, or all', 'api')
+    .option(
+      '--requests-dir <path>',
+      'Directory containing .veritas-kanban agent request JSON files'
+    )
+    .option('--hermes <command>', 'Hermes CLI command/path', 'hermes')
+    .option('--toolsets <toolsets>', 'Comma-separated Hermes toolsets', 'terminal,file,web')
+    .option('--provider <provider>', 'Hermes inference provider', 'openai-codex')
+    .option('--model <model>', 'Hermes inference model', 'gpt-5.5')
+    .option(
+      '--api-base <url>',
+      'Veritas API base URL',
+      process.env.VK_API_URL || DEFAULT_VERITAS_API_BASE
+    )
+    .option('--limit <n>', 'Maximum requests to dispatch', (value) => Number.parseInt(value, 10))
+    .option('--timeout-ms <n>', 'Per-session timeout in milliseconds', (value) =>
+      Number.parseInt(value, 10)
+    )
+    .option('--dry-run', 'List dispatchable requests and append no completion callback')
+    .option('--json', 'Output as JSON')
+    .action(async (options) => {
+      try {
+        if (!['api', 'files', 'automation', 'all'].includes(options.source)) {
+          console.error(chalk.red('Error: --source must be api, files, automation, or all'));
+          process.exit(1);
+        }
+
+        const apiBase = options.apiBase || process.env.VK_API_URL || DEFAULT_VERITAS_API_BASE;
+        const results = await dispatchPendingToHermes(createApiClient(apiBase), {
+          source: options.source,
+          requestsDir: options.requestsDir,
+          hermesCommand: options.hermes,
+          toolsets: options.toolsets,
+          provider: options.provider,
+          model: options.model,
+          limit: options.limit,
+          timeoutMs: options.timeoutMs,
+          dryRun: Boolean(options.dryRun),
+          apiBase,
+        });
+
+        if (options.json) {
+          console.log(JSON.stringify(results, null, 2));
+        } else if (results.length === 0) {
+          console.log(chalk.dim('No dispatchable Hermes agent requests'));
+        } else {
+          console.log(chalk.bold(`\n🤖 Hermes Dispatch Result(s): ${results.length}\n`));
+          for (const result of results) {
+            const color =
+              result.status === 'complete'
+                ? chalk.green
+                : result.status === 'failed'
+                  ? chalk.red
+                  : chalk.yellow;
+            console.log(
+              color(`${result.status.toUpperCase()}: ${result.taskId} (${result.attemptId})`)
+            );
+            if (result.summary) console.log(chalk.dim(`  ${result.summary.split('\n')[0]}`));
+            if (result.error) console.log(chalk.dim(`  ${result.error.split('\n')[0]}`));
+          }
         }
       } catch (err) {
         console.error(chalk.red(`Error: ${(err as Error).message}`));

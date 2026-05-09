@@ -7,7 +7,14 @@ import { getBlockingService } from '../services/blocking-service.js';
 import { getGitHubSyncService } from '../services/github-sync-service.js';
 import { getDelegationService } from '../services/delegation-service.js';
 import { getProgressService } from '../services/progress-service.js';
-import type { CreateTaskInput, UpdateTaskInput, Task, TaskSummary } from '@veritas-kanban/shared';
+import type {
+  CreateTaskInput,
+  UpdateTaskInput,
+  Task,
+  TaskSummary,
+  QaGateState,
+  Subtask,
+} from '@veritas-kanban/shared';
 import { broadcastTaskChange } from '../services/broadcast-service.js';
 import { asyncHandler } from '../middleware/async-handler.js';
 import { NotFoundError, ValidationError } from '../middleware/error-handler.js';
@@ -75,6 +82,33 @@ const automationSchema = z
   })
   .optional();
 
+const taskClaimSchema = z
+  .object({
+    agent: z.string().min(1).max(100),
+    sessionId: z.string().min(1).max(200),
+    claimedAt: z.string(),
+    leaseExpiresAt: z.string(),
+    model: z.string().max(100).optional(),
+    routingReason: z.string().max(500).optional(),
+    routingRule: z.string().max(100).optional(),
+  })
+  .optional();
+
+const runnableTaskSelectorSchema = z.object({
+  taskId: z.string().min(1).optional(),
+  project: z.string().min(1).optional(),
+  type: z.string().min(1).optional(),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+const claimRunnableTaskSchema = runnableTaskSelectorSchema.extend({
+  agent: z.string().min(1).max(100),
+  sessionId: z.string().min(1).max(200),
+  model: z.string().max(100).optional(),
+  leaseMinutes: z.number().int().min(1).max(1440).optional(),
+});
+
 const reorderTasksSchema = z.object({
   orderedIds: z.array(z.string().min(1)).min(1, 'orderedIds must be a non-empty array of task IDs'),
 });
@@ -129,6 +163,21 @@ const githubSchema = z
   })
   .optional();
 
+const runModeSchema = z
+  .enum(['strategy', 'eng-review', 'paranoid-review', 'qa'])
+  .optional()
+  .nullable();
+
+const qaGateSchema = z
+  .object({
+    required: z.boolean(),
+    passed: z.boolean(),
+    passedAt: z.string().optional(),
+    passedBy: z.string().optional(),
+  })
+  .optional()
+  .nullable();
+
 const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().optional(),
@@ -141,6 +190,7 @@ const updateTaskSchema = z.object({
   git: gitSchema,
   github: githubSchema,
   attempt: attemptSchema,
+  claim: taskClaimSchema,
   reviewComments: z.array(reviewCommentSchema).optional(),
   reviewScores: reviewScoresSchema.optional(),
   review: reviewStateSchema.optional(),
@@ -151,6 +201,8 @@ const updateTaskSchema = z.object({
   plan: z.string().optional(),
   automation: automationSchema,
   position: z.number().optional(),
+  runMode: runModeSchema,
+  qaGate: qaGateSchema,
 });
 
 // Progress schemas
@@ -158,6 +210,47 @@ const appendProgressSchema = z.object({
   section: z.string().min(1),
   content: z.string().min(1),
 });
+
+const criteriaWritebackSchema = z.object({
+  subtaskId: z.string().min(1),
+  criteriaIndex: z.number().int().min(0),
+  checked: z.boolean().optional().default(true),
+});
+
+const subtaskWritebackSchema = z.object({
+  subtaskId: z.string().min(1),
+  completed: z.boolean().optional(),
+});
+
+const qaEvidenceSchema = z.object({
+  evidence: z.string().min(1),
+  passedBy: z.string().min(1).max(100).optional(),
+});
+
+const writebackSchema = z.object({
+  progress: appendProgressSchema.optional(),
+  criteria: z.array(criteriaWritebackSchema).optional().default([]),
+  subtasks: z.array(subtaskWritebackSchema).optional().default([]),
+  complete: z.boolean().optional().default(false),
+  qa: qaEvidenceSchema.optional(),
+});
+
+function getMergedQaGate(
+  existingGate: QaGateState | null | undefined,
+  incomingGate: QaGateState | null | undefined
+): QaGateState | null | undefined {
+  return incomingGate !== undefined ? incomingGate : existingGate;
+}
+
+function isBlockedByQaGate(
+  existingGate: QaGateState | null | undefined,
+  incomingGate: QaGateState | null | undefined,
+  newStatus: string | undefined
+): boolean {
+  if (newStatus !== 'done') return false;
+  const mergedGate = getMergedQaGate(existingGate, incomingGate);
+  return !!(mergedGate?.required && !mergedGate?.passed);
+}
 
 // === Core CRUD Routes ===
 
@@ -326,6 +419,7 @@ router.get(
               }
             : undefined,
           attempt: task.attempt,
+          claim: task.claim,
         })
       );
     } else {
@@ -443,6 +537,47 @@ router.get(
     counts.archived = archived.length;
 
     res.json(counts);
+  })
+);
+
+// GET /api/tasks/runnable - Select router-runnable tasks for Hermes/MC
+router.get(
+  '/runnable',
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = runnableTaskSelectorSchema.parse(req.query);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new ValidationError('Validation failed', error.issues);
+      }
+      throw error;
+    }
+
+    const tasks = await taskService.selectRunnableTasks(input);
+    res.json({ count: tasks.length, tasks });
+  })
+);
+
+// POST /api/tasks/claim - Atomically claim the next router-runnable task
+router.post(
+  '/claim',
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = claimRunnableTaskSchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new ValidationError('Validation failed', error.issues);
+      }
+      throw error;
+    }
+
+    const result = await taskService.claimRunnableTask(input);
+    if (result.task) {
+      broadcastTaskChange('updated', result.task.id);
+    }
+    res.json(result);
   })
 );
 
@@ -649,6 +784,10 @@ router.patch(
     const oldTask = await taskService.getTask(req.params.id as string);
     if (!oldTask) {
       throw new NotFoundError('Task not found');
+    }
+
+    if (isBlockedByQaGate(oldTask.qaGate, input.qaGate, input.status)) {
+      throw new ValidationError('QA gate has not passed; refusing to move task to done');
     }
 
     // Check delegation if moving to 'done'
@@ -1312,6 +1451,130 @@ router.post(
     await progressService.appendProgress(taskId, input.section, input.content);
 
     res.json({ success: true });
+  })
+);
+
+/**
+ * POST /api/tasks/:id/writeback - Agent writeback contract for progress,
+ * subtask criteria, and guarded completion in one API call.
+ *
+ * Completion is refused unless the request supplies QA evidence or the task
+ * already has qaGate.required=true and qaGate.passed=true.
+ */
+router.post(
+  '/:id/writeback',
+  asyncHandler(async (req, res) => {
+    const taskId = req.params.id as string;
+    const task = await taskService.getTask(taskId);
+
+    if (!task) {
+      throw new NotFoundError('Task not found');
+    }
+
+    let input: z.infer<typeof writebackSchema>;
+    try {
+      input = writebackSchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new ValidationError('Validation failed', error.issues);
+      }
+      throw error;
+    }
+
+    const now = new Date().toISOString();
+    const updates: UpdateTaskInput = {};
+    const subtasks = (task.subtasks || []).map((subtask: Subtask) => ({ ...subtask }));
+    let subtasksChanged = false;
+
+    for (const criteriaUpdate of input.criteria) {
+      const subtask = subtasks.find((candidate) => candidate.id === criteriaUpdate.subtaskId);
+      if (!subtask) {
+        throw new NotFoundError(`Subtask not found: ${criteriaUpdate.subtaskId}`);
+      }
+      if (!subtask.acceptanceCriteria || !subtask.criteriaChecked) {
+        throw new ValidationError(
+          `Subtask has no acceptance criteria: ${criteriaUpdate.subtaskId}`
+        );
+      }
+      if (criteriaUpdate.criteriaIndex >= subtask.acceptanceCriteria.length) {
+        throw new ValidationError(`Criteria index out of range: ${criteriaUpdate.subtaskId}`);
+      }
+
+      subtask.criteriaChecked[criteriaUpdate.criteriaIndex] = criteriaUpdate.checked;
+      subtask.completed = subtask.criteriaChecked.every(Boolean);
+      subtasksChanged = true;
+    }
+
+    for (const subtaskUpdate of input.subtasks) {
+      const subtask = subtasks.find((candidate) => candidate.id === subtaskUpdate.subtaskId);
+      if (!subtask) {
+        throw new NotFoundError(`Subtask not found: ${subtaskUpdate.subtaskId}`);
+      }
+      if (subtaskUpdate.completed !== undefined) {
+        subtask.completed = subtaskUpdate.completed;
+        subtasksChanged = true;
+      }
+    }
+
+    if (subtasksChanged) {
+      updates.subtasks = subtasks;
+    }
+
+    if (input.complete) {
+      const existingGatePassed = !!(task.qaGate?.required && task.qaGate.passed);
+      if (!input.qa && !existingGatePassed) {
+        throw new ValidationError('QA evidence is required before moving task to done');
+      }
+
+      if (input.qa) {
+        updates.qaGate = {
+          required: true,
+          passed: true,
+          passedAt: now,
+          passedBy: input.qa.passedBy || 'api',
+        };
+      }
+
+      updates.status = 'done';
+    }
+
+    if (input.progress) {
+      await progressService.appendProgress(taskId, input.progress.section, input.progress.content);
+    }
+
+    if (input.qa) {
+      await progressService.appendProgress(taskId, 'QA Evidence', input.qa.evidence);
+    }
+
+    let updatedTask = task;
+    if (Object.keys(updates).length > 0) {
+      const persistedTask = await taskService.updateTask(taskId, updates);
+      if (!persistedTask) {
+        throw new NotFoundError('Task update failed - task not found');
+      }
+      updatedTask = persistedTask;
+      broadcastTaskChange('updated', updatedTask.id);
+
+      if (updates.status === 'done' && task.status !== 'done') {
+        await activityService.logActivity(
+          'status_changed',
+          updatedTask.id,
+          updatedTask.title,
+          { from: task.status, status: 'done', writeback: true },
+          updatedTask.agent
+        );
+      } else {
+        await activityService.logActivity(
+          'task_updated',
+          updatedTask.id,
+          updatedTask.title,
+          { writeback: true },
+          updatedTask.agent
+        );
+      }
+    }
+
+    res.json({ success: true, task: updatedTask });
   })
 );
 

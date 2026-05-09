@@ -208,6 +208,34 @@ describe('TaskCard', () => {
     expect(screen.getByText(/Claude running/)).toBeDefined();
   });
 
+  it('shows Auto as routing only rather than concrete execution', () => {
+    const task = createMockTask({ agent: 'auto', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Auto route')).toBeDefined();
+    expect(screen.queryByText(/Auto running/)).toBeNull();
+  });
+
+  it('shows concrete Hermes profile assignment on the card', () => {
+    const task = createMockTask({ agent: 'aura', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Profile: Aura')).toBeDefined();
+  });
+
+  it('shows concrete attempt profile/status when execution is running', () => {
+    const task = createMockTask({
+      agent: 'auto',
+      attempt: {
+        id: 'attempt-1',
+        agent: 'aura',
+        status: 'running',
+        started: '2025-01-01T00:00:00Z',
+      },
+    });
+    renderCard(task);
+    expect(screen.getByText(/Aura running/)).toBeDefined();
+    expect(screen.queryByText('Auto route')).toBeNull();
+  });
+
   it('shows subtask progress', () => {
     const task = createMockTask({
       subtasks: [

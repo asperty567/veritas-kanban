@@ -42,6 +42,16 @@ export interface TaskAttempt {
   ended?: string;
 }
 
+export interface TaskClaim {
+  agent: AgentType;
+  sessionId: string;
+  claimedAt: string;
+  leaseExpiresAt: string;
+  model?: string;
+  routingReason?: string;
+  routingRule?: string;
+}
+
 export interface Subtask {
   id: string;
   title: string;
@@ -190,6 +200,9 @@ export interface Task {
   // Current attempt
   attempt?: TaskAttempt;
 
+  // Active router claim/lease used by Hermes/MC to avoid duplicate execution
+  claim?: TaskClaim;
+
   // Attempt history
   attempts?: TaskAttempt[];
 
@@ -328,6 +341,7 @@ export interface UpdateTaskInput {
   git?: Partial<TaskGit>;
   github?: TaskGitHub;
   attempt?: TaskAttempt;
+  claim?: TaskClaim;
   reviewComments?: ReviewComment[];
   reviewScores?: [number, number, number, number];
   review?: ReviewState;
@@ -403,6 +417,7 @@ export interface TaskSummary {
     isRunning: boolean;
   };
   attempt?: TaskAttempt;
+  claim?: TaskClaim;
   checkpoint?: {
     step: number;
     timestamp: string;

@@ -24,6 +24,8 @@ import {
   XCircle,
   Save,
   RotateCcw,
+  Bot,
+  Route,
 } from 'lucide-react';
 import { useBulkActions } from '@/hooks/useBulkActions';
 import { formatDuration } from '@/hooks/useTimeTracking';
@@ -41,7 +43,19 @@ const agentNames: Record<string, string> = {
   copilot: 'Copilot',
   gemini: 'Gemini',
   veritas: 'Veritas',
+  aura: 'Aura',
 };
+
+function getAgentDisplayName(agent?: string): string {
+  if (!agent) return 'Agent';
+  return agentNames[agent] || agent;
+}
+
+function getAssignedProfiles(task: Task): string[] {
+  if (task.agents && task.agents.length > 0) return task.agents;
+  if (task.agent && task.agent !== 'auto') return [task.agent];
+  return [];
+}
 
 const blockedCategoryInfo: Record<
   BlockedCategory,
@@ -94,6 +108,8 @@ function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolea
     if (pt.type !== nt.type) return false;
     if (pt.project !== nt.project) return false;
     if (pt.sprint !== nt.sprint) return false;
+    if (pt.agent !== nt.agent) return false;
+    if ((pt.agents || []).join('|') !== (nt.agents || []).join('|')) return false;
     if (pt.timeTracking?.totalSeconds !== nt.timeTracking?.totalSeconds) return false;
     if (pt.timeTracking?.isRunning !== nt.timeTracking?.isRunning) return false;
     if (pt.attempt?.status !== nt.attempt?.status) return false;
@@ -225,6 +241,8 @@ export const TaskCard = memo(function TaskCard({
   };
 
   const isAgentRunning = task.attempt?.status === 'running';
+  const assignedProfiles = useMemo(() => getAssignedProfiles(task), [task.agent, task.agents]);
+  const isAutoRouting = task.agent === 'auto' || (!task.agent && assignedProfiles.length === 0);
 
   // Memoize type info
   const { typeLabel, TypeIconComponent, typeColor } = useMemo(() => {
@@ -338,18 +356,51 @@ export const TaskCard = memo(function TaskCard({
                   <TooltipTrigger asChild>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 flex items-center gap-1 animate-pulse">
                       <span className="sr-only">
-                        Agent {agentNames[task.attempt?.agent || ''] || task.attempt?.agent} is
-                        actively running on this task
+                        Agent {getAgentDisplayName(task.attempt?.agent)} is actively running on this
+                        task
                       </span>
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      {agentNames[task.attempt?.agent || ''] || 'Agent'} running
+                      {getAgentDisplayName(task.attempt?.agent)} running
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p className="font-medium">Agent Active</p>
+                    <p className="font-medium">Concrete profile active</p>
                     <p className="text-sm">
-                      {agentNames[task.attempt?.agent || ''] || task.attempt?.agent} is working on
-                      this task
+                      Concrete profile {getAgentDisplayName(task.attempt?.agent)} is working on this
+                      task
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {!isAgentRunning && assignedProfiles.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1">
+                      <Bot className="h-3 w-3" />
+                      Profile: {assignedProfiles.map(getAgentDisplayName).join(', ')}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Concrete Hermes profile assignment</p>
+                    <p className="text-sm">
+                      Assigned profile{assignedProfiles.length === 1 ? '' : 's'}:{' '}
+                      {assignedProfiles.map(getAgentDisplayName).join(', ')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {!isAgentRunning && isAutoRouting && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400 flex items-center gap-1">
+                      <Route className="h-3 w-3" />
+                      Auto route
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Routing only</p>
+                    <p className="text-sm">
+                      Auto is a routing selection, not proof that a concrete profile is executing.
                     </p>
                   </TooltipContent>
                 </Tooltip>

@@ -13,6 +13,7 @@ import type {
   TimeTracking,
   RunStartedEvent,
   RunCompletedEvent,
+  TaskPriority,
 } from '@veritas-kanban/shared';
 import { getTelemetryService, type TelemetryService } from './telemetry-service.js';
 import { ConfigService } from './config-service.js';
@@ -71,6 +72,29 @@ export interface TaskServiceOptions {
   tasksDir?: string;
   archiveDir?: string;
   telemetryService?: TelemetryService;
+}
+
+export interface RunnableTaskSelectorInput {
+  taskId?: string;
+  project?: string;
+  type?: string;
+  priority?: TaskPriority;
+  limit?: number;
+}
+
+export interface ClaimRunnableTaskInput extends RunnableTaskSelectorInput {
+  agent: string;
+  sessionId: string;
+  model?: string;
+  leaseMinutes?: number;
+}
+
+export interface ClaimRunnableTaskResult {
+  task: Task | null;
+  claimed: boolean;
+  idempotent: boolean;
+  candidates: Task[];
+  reason?: string;
 }
 
 /** Ignore file-watcher events within this window after our own writes */
@@ -441,6 +465,7 @@ export class TaskService {
         git: data.git,
         github: data.github,
         attempt: data.attempt,
+        claim: data.claim,
         attempts: data.attempts,
         reviewComments,
         reviewScores: data.reviewScores,
@@ -553,6 +578,180 @@ export class TaskService {
   async getTask(id: string): Promise<Task | null> {
     await this.initCache();
     return this.cacheGet(id) ?? null;
+  }
+
+  private isClaimLeaseExpired(task: Task, nowMs: number): boolean {
+    if (task.status !== 'in-progress' || !task.claim?.leaseExpiresAt) return false;
+    const leaseExpiresAt = Date.parse(task.claim.leaseExpiresAt);
+    return Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= nowMs;
+  }
+
+  private taskMatchesSelector(task: Task, selector: RunnableTaskSelectorInput): boolean {
+    if (selector.taskId && task.id !== selector.taskId) return false;
+    if (selector.project && task.project !== selector.project) return false;
+    if (selector.type && task.type !== selector.type) return false;
+    if (selector.priority && task.priority !== selector.priority) return false;
+    return true;
+  }
+
+  private hasUnresolvedDependency(task: Task, allTasksById: Map<string, Task>): boolean {
+    const dependencyIds = [
+      ...(task.blockedBy ?? []),
+      ...(task.dependencies?.depends_on ?? []),
+    ].filter(Boolean);
+
+    return dependencyIds.some((taskId) => allTasksById.get(taskId)?.status !== 'done');
+  }
+
+  private isRunnableLeafTask(
+    task: Task,
+    allTasksById: Map<string, Task>,
+    nowMs: number,
+    selector: RunnableTaskSelectorInput
+  ): boolean {
+    if (!this.taskMatchesSelector(task, selector)) return false;
+    if (task.status === 'done' || task.status === 'blocked' || task.status === 'cancelled')
+      return false;
+    if (task.status === 'in-progress' && !this.isClaimLeaseExpired(task, nowMs)) return false;
+    if (task.status !== 'todo' && task.status !== 'in-progress') return false;
+    if (task.blockedReason) return false;
+    if (this.hasUnresolvedDependency(task, allTasksById)) return false;
+
+    // Parent/container tasks should not be router-runnable while child criteria remain open.
+    if (task.subtasks?.some((subtask) => !subtask.completed)) return false;
+
+    return true;
+  }
+
+  private sortRunnableTasks(tasks: Task[]): Task[] {
+    const priorityRank: Record<TaskPriority, number> = {
+      critical: 4,
+      high: 3,
+      medium: 2,
+      low: 1,
+    };
+
+    return [...tasks].sort((a, b) => {
+      const priorityDelta = priorityRank[b.priority] - priorityRank[a.priority];
+      if (priorityDelta !== 0) return priorityDelta;
+
+      const aPosition = a.position ?? Number.MAX_SAFE_INTEGER;
+      const bPosition = b.position ?? Number.MAX_SAFE_INTEGER;
+      if (aPosition !== bPosition) return aPosition - bPosition;
+
+      return new Date(a.created).getTime() - new Date(b.created).getTime();
+    });
+  }
+
+  private selectRunnableTasksFromList(
+    tasks: Task[],
+    selector: RunnableTaskSelectorInput,
+    nowMs: number
+  ): Task[] {
+    const allTasksById = new Map(tasks.map((task) => [task.id, task]));
+    const limit = selector.limit === undefined ? 25 : Math.max(1, Math.min(selector.limit, 100));
+    return this.sortRunnableTasks(
+      tasks.filter((task) => this.isRunnableLeafTask(task, allTasksById, nowMs, selector))
+    ).slice(0, limit);
+  }
+
+  async selectRunnableTasks(selector: RunnableTaskSelectorInput = {}): Promise<Task[]> {
+    const tasks = await this.listTasks();
+    return this.selectRunnableTasksFromList(tasks, selector, Date.now());
+  }
+
+  async claimRunnableTask(input: ClaimRunnableTaskInput): Promise<ClaimRunnableTaskResult> {
+    const agent = input.agent.trim();
+    const sessionId = input.sessionId.trim();
+    if (!agent) throw new ValidationError('Claim agent is required', []);
+    if (!sessionId) throw new ValidationError('Claim sessionId is required', []);
+
+    let result: ClaimRunnableTaskResult = {
+      task: null,
+      claimed: false,
+      idempotent: false,
+      candidates: [],
+      reason: 'no-runnable-task',
+    };
+
+    const selectorLockPath = path.join(this.tasksDir, '.router-claim.lock');
+    await withFileLock(selectorLockPath, async () => {
+      const tasks = await this.listTasks();
+      const nowMs = Date.now();
+      const existingClaim = tasks.find(
+        (task) =>
+          task.status === 'in-progress' &&
+          task.claim?.agent === agent &&
+          task.claim?.sessionId === sessionId &&
+          !this.isClaimLeaseExpired(task, nowMs) &&
+          this.taskMatchesSelector(task, input)
+      );
+
+      if (existingClaim) {
+        result = {
+          task: existingClaim,
+          claimed: false,
+          idempotent: true,
+          candidates: [existingClaim],
+          reason: 'claim-already-active',
+        };
+        return;
+      }
+
+      const candidates = this.selectRunnableTasksFromList(
+        tasks,
+        { ...input, limit: input.limit ?? 25 },
+        nowMs
+      );
+      const target = candidates[0];
+      if (!target) {
+        result = {
+          task: null,
+          claimed: false,
+          idempotent: false,
+          candidates,
+          reason: 'no-runnable-task',
+        };
+        return;
+      }
+
+      const claimedAt = new Date(nowMs).toISOString();
+      const leaseMinutes = Math.max(1, Math.min(input.leaseMinutes ?? 30, 24 * 60));
+      const leaseExpiresAt = new Date(nowMs + leaseMinutes * 60_000).toISOString();
+      const registryValidation = getAgentRegistryService().validateAgentRef(agent);
+      const updated = await this.updateTask(target.id, {
+        status: 'in-progress',
+        ...(registryValidation.valid ? { agent } : {}),
+        attempt: {
+          id: `claim_${sessionId}`,
+          agent,
+          status: 'running',
+          started: claimedAt,
+        },
+        automation: {
+          ...(target.automation ?? {}),
+          sessionKey: sessionId,
+          spawnedAt: target.automation?.spawnedAt ?? claimedAt,
+        },
+        claim: {
+          agent,
+          sessionId,
+          claimedAt,
+          leaseExpiresAt,
+          model: input.model,
+        },
+      });
+
+      result = {
+        task: updated,
+        claimed: Boolean(updated),
+        idempotent: false,
+        candidates,
+        reason: updated ? 'claimed' : 'claim-update-failed',
+      };
+    });
+
+    return result;
   }
 
   async createTask(input: CreateTaskInput): Promise<Task> {

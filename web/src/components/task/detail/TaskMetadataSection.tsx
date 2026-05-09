@@ -46,6 +46,19 @@ export function TaskMetadataSection({
   const { data: sprints = [] } = useSprints();
   const { data: config } = useConfig();
   const enabledAgents = config?.agents.filter((a) => a.enabled) || [];
+  const getAgentDisplayName = (agent?: string) =>
+    enabledAgents.find((a) => a.type === agent)?.name ||
+    (agent === 'aura' ? 'Aura' : agent || 'Agent');
+  const assignedProfiles =
+    task.agents && task.agents.length > 0
+      ? task.agents
+      : task.agent && task.agent !== 'auto'
+        ? [task.agent]
+        : [];
+  const isAutoRouting = task.agent === 'auto' || (!task.agent && assignedProfiles.length === 0);
+  const attemptLabel = task.attempt
+    ? `${getAgentDisplayName(task.attempt.agent)} · ${task.attempt.status}`
+    : 'No active attempt recorded';
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
 
@@ -244,32 +257,48 @@ export function TaskMetadataSection({
         </div>
 
         <div className="space-y-2">
-          <Label className="text-muted-foreground">Agent</Label>
+          <Label className="text-muted-foreground">Routing / Profile</Label>
           {readOnly ? (
-            <div className="text-sm font-medium px-3 py-2 bg-muted/30 rounded-md">
-              {task.agent === 'auto' || !task.agent
-                ? 'Auto (routing)'
-                : enabledAgents.find((a) => a.type === task.agent)?.name || task.agent}
+            <div className="space-y-2 text-sm px-3 py-2 bg-muted/30 rounded-md">
+              <div className="font-medium">
+                {assignedProfiles.length > 0
+                  ? `Concrete profile: ${assignedProfiles.map(getAgentDisplayName).join(', ')}`
+                  : 'Auto route only'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {isAutoRouting
+                  ? 'Auto is a routing selection, not proof of concrete execution.'
+                  : `Assigned to Hermes profile${assignedProfiles.length === 1 ? '' : 's'}.`}
+              </div>
+              <div className="text-xs text-muted-foreground">Current attempt: {attemptLabel}</div>
             </div>
           ) : (
-            <Select
-              value={task.agent || 'auto'}
-              onValueChange={(value) =>
-                onUpdate('agent', value === 'auto' ? undefined : (value as AgentType))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto (routing)</SelectItem>
-                {enabledAgents.map((a) => (
-                  <SelectItem key={a.type} value={a.type}>
-                    {a.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <>
+              <Select
+                value={task.agent || 'auto'}
+                onValueChange={(value) =>
+                  onUpdate('agent', value === 'auto' ? undefined : (value as AgentType))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto route (dispatcher chooses)</SelectItem>
+                  {enabledAgents.map((a) => (
+                    <SelectItem key={a.type} value={a.type}>
+                      Concrete profile: {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground">
+                {isAutoRouting
+                  ? 'Auto is routing only; execution appears after a dispatcher starts a concrete profile.'
+                  : `Concrete profile: ${assignedProfiles.map(getAgentDisplayName).join(', ')}`}
+              </div>
+              <div className="text-xs text-muted-foreground">Current attempt: {attemptLabel}</div>
+            </>
           )}
         </div>
       </div>

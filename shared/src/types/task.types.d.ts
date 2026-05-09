@@ -34,6 +34,15 @@ export interface TaskAttempt {
   started?: string;
   ended?: string;
 }
+export interface TaskClaim {
+  agent: AgentType;
+  sessionId: string;
+  claimedAt: string;
+  leaseExpiresAt: string;
+  model?: string;
+  routingReason?: string;
+  routingRule?: string;
+}
 export interface Subtask {
   id: string;
   title: string;
@@ -114,6 +123,7 @@ export interface Task {
   git?: TaskGit;
   github?: TaskGitHub;
   attempt?: TaskAttempt;
+  claim?: TaskClaim;
   attempts?: TaskAttempt[];
   reviewComments?: ReviewComment[];
   review?: ReviewState;
@@ -190,6 +200,7 @@ export interface UpdateTaskInput {
   git?: Partial<TaskGit>;
   github?: TaskGitHub;
   attempt?: TaskAttempt;
+  claim?: TaskClaim;
   reviewComments?: ReviewComment[];
   review?: ReviewState;
   subtasks?: Subtask[];
@@ -247,6 +258,7 @@ export interface TaskSummary {
     isRunning: boolean;
   };
   attempt?: TaskAttempt;
+  claim?: TaskClaim;
 }
 /**
  * Paginated response envelope for GET /api/tasks.
