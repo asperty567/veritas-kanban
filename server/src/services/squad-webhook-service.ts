@@ -53,22 +53,26 @@ export async function fireSquadWebhook(
   }
 
   // Route based on mode
-  if (settings.mode === 'openclaw') {
-    await fireOpenClawWake(message, settings);
+  if (settings.mode === 'hermes' || settings.mode === 'openclaw') {
+    await fireHermesGatewayWake(message, settings);
   } else {
     await fireGenericWebhook(message, settings, isHuman);
   }
 }
 
 /**
- * Fire an OpenClaw gateway wake call
+ * Fire a Hermes gateway wake call. The openclaw* settings names are retained
+ * only as legacy compatibility aliases while stored settings migrate.
  */
-async function fireOpenClawWake(
+async function fireHermesGatewayWake(
   message: SquadMessage,
   settings: SquadWebhookSettings
 ): Promise<void> {
-  if (!settings.openclawGatewayUrl || !settings.openclawGatewayToken) {
-    log.warn('OpenClaw mode enabled but gatewayUrl or gatewayToken missing');
+  const gatewayUrl = settings.hermesGatewayUrl || settings.openclawGatewayUrl;
+  const gatewayToken = settings.hermesGatewayToken || settings.openclawGatewayToken;
+
+  if (!gatewayUrl || !gatewayToken) {
+    log.warn('Hermes gateway mode enabled but gatewayUrl or gatewayToken missing');
     return;
   }
 
@@ -84,7 +88,7 @@ async function fireOpenClawWake(
     },
   };
 
-  const url = `${settings.openclawGatewayUrl}/tools/invoke`;
+  const url = `${gatewayUrl}/tools/invoke`;
 
   // Validate URL to prevent SSRF attacks
   const validation = validateWebhookUrl(url);
@@ -101,7 +105,7 @@ async function fireOpenClawWake(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.openclawGatewayToken}`,
+        Authorization: `Bearer ${gatewayToken}`,
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -112,17 +116,17 @@ async function fireOpenClawWake(
     if (!response.ok) {
       log.warn(
         { status: response.status, statusText: response.statusText, url },
-        'OpenClaw wake call returned non-2xx status'
+        'Hermes gateway wake call returned non-2xx status'
       );
       return;
     }
 
-    log.info({ messageId: message.id, displayName }, 'OpenClaw wake call fired successfully');
+    log.info({ messageId: message.id, displayName }, 'Hermes gateway wake call fired successfully');
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      log.warn({ url }, 'OpenClaw wake call timed out after 5 seconds');
+      log.warn({ url }, 'Hermes gateway wake call timed out after 5 seconds');
     } else {
-      log.error({ err: err.message, url }, 'OpenClaw wake call failed');
+      log.error({ err: err.message, url }, 'Hermes gateway wake call failed');
     }
   }
 }

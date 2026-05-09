@@ -11,7 +11,20 @@ vi.mock('../../services/status-history-service.js', () => ({
   },
 }));
 
-import { agentStatusRoutes, updateAgentStatus, getAgentStatus, initAgentStatus } from '../../routes/agent-status.js';
+const mockRegistryAgents = vi.hoisted(() => ({ value: [] as any[] }));
+
+vi.mock('../../services/agent-registry-service.js', () => ({
+  getAgentRegistryService: () => ({
+    list: () => mockRegistryAgents.value,
+  }),
+}));
+
+import {
+  agentStatusRoutes,
+  updateAgentStatus,
+  getAgentStatus,
+  initAgentStatus,
+} from '../../routes/agent-status.js';
 import { errorHandler } from '../../middleware/error-handler.js';
 
 describe('Agent Status Routes (actual module)', () => {
@@ -19,6 +32,7 @@ describe('Agent Status Routes (actual module)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRegistryAgents.value = [];
     updateAgentStatus({ status: 'idle', subAgentCount: 0 });
     app = express();
     app.use(express.json());
@@ -32,6 +46,36 @@ describe('Agent Status Routes (actual module)', () => {
     expect(res.body.status).toBe('idle');
   });
 
+  it('GET / should expose registry agents through the legacy status endpoint', async () => {
+    mockRegistryAgents.value = [
+      {
+        id: 'hermes-agent',
+        name: 'HermesAgent',
+        status: 'busy',
+        registeredAt: '2026-05-09T08:00:00.000Z',
+        lastHeartbeat: '2026-05-09T08:01:00.000Z',
+        currentTaskId: 'task_1',
+        currentTaskTitle: 'Clean repo',
+        capabilities: [],
+      },
+    ];
+
+    const res = await request(app).get('/api/agent/status');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('sub-agent');
+    expect(res.body.subAgentCount).toBe(1);
+    expect(res.body.activeAgents).toEqual([
+      {
+        agent: 'HermesAgent',
+        status: 'working',
+        taskId: 'task_1',
+        taskTitle: 'Clean repo',
+        startedAt: '2026-05-09T08:01:00.000Z',
+      },
+    ]);
+  });
+
   it('GET / should return flattened activeTask', async () => {
     updateAgentStatus({ status: 'working', activeTask: { id: 't1', title: 'Test' } });
     const res = await request(app).get('/api/agent/status');
@@ -40,13 +84,17 @@ describe('Agent Status Routes (actual module)', () => {
   });
 
   it('POST / should update to working', async () => {
-    const res = await request(app).post('/api/agent/status').send({ status: 'working', activeTask: { id: 't1' } });
+    const res = await request(app)
+      .post('/api/agent/status')
+      .send({ status: 'working', activeTask: { id: 't1' } });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('working');
   });
 
   it('POST / should update sub-agent count', async () => {
-    const res = await request(app).post('/api/agent/status').send({ status: 'sub-agent', subAgentCount: 3 });
+    const res = await request(app)
+      .post('/api/agent/status')
+      .send({ status: 'sub-agent', subAgentCount: 3 });
     expect(res.body.subAgentCount).toBe(3);
   });
 
@@ -58,7 +106,9 @@ describe('Agent Status Routes (actual module)', () => {
   });
 
   it('POST / should set error message', async () => {
-    const res = await request(app).post('/api/agent/status').send({ status: 'error', errorMessage: 'Failed' });
+    const res = await request(app)
+      .post('/api/agent/status')
+      .send({ status: 'error', errorMessage: 'Failed' });
     expect(res.body.errorMessage).toBe('Failed');
   });
 

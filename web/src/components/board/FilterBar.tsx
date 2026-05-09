@@ -13,6 +13,41 @@ import type { Task, TaskType } from '@veritas-kanban/shared';
 import { useTaskTypes, getTypeIcon } from '@/hooks/useTaskTypes';
 import { useProjects } from '@/hooks/useProjects';
 import { useConfig } from '@/hooks/useConfig';
+import { useGlobalAgentStatus } from '@/hooks/useGlobalAgentStatus';
+
+function formatAgentLabel(agent: string): string {
+  return agent
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => (part.length <= 3 ? part.toUpperCase() : part[0].toUpperCase() + part.slice(1)))
+    .join(' ');
+}
+
+function normalizeAgentKey(agent: string): string {
+  return agent.trim().toLowerCase();
+}
+
+interface AgentOption {
+  value: string;
+  label: string;
+}
+
+function addAgentOption(
+  agents: Map<string, AgentOption>,
+  value: string | null | undefined,
+  label?: string | null
+): void {
+  const trimmedValue = value?.trim();
+  if (!trimmedValue) return;
+
+  const key = normalizeAgentKey(trimmedValue);
+  if (!agents.has(key)) {
+    agents.set(key, {
+      value: trimmedValue,
+      label: label?.trim() || formatAgentLabel(trimmedValue),
+    });
+  }
+}
 
 export interface FilterState {
   search: string;
@@ -27,11 +62,23 @@ interface FilterBarProps {
   onFiltersChange: (filters: FilterState) => void;
 }
 
-export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
+export function FilterBar({ tasks, filters, onFiltersChange }: FilterBarProps) {
   const { data: taskTypes = [], isLoading: typesLoading } = useTaskTypes();
   const { data: projects = [], isLoading: projectsLoading } = useProjects();
   const { data: config } = useConfig();
-  const agents = config?.agents || [];
+  const { data: agentStatus } = useGlobalAgentStatus();
+  const agents = new Map<string, AgentOption>();
+  for (const agent of config?.agents || []) {
+    addAgentOption(agents, agent.type, agent.name);
+  }
+  for (const activeAgent of agentStatus?.activeAgents || []) {
+    addAgentOption(agents, activeAgent.agent, activeAgent.agent);
+  }
+  for (const task of tasks) {
+    if (task.agent && task.agent !== 'auto') {
+      addAgentOption(agents, task.agent);
+    }
+  }
 
   // Count active filters
   const activeFilterCount = [filters.search, filters.project, filters.type, filters.agent].filter(
@@ -138,9 +185,9 @@ export function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
           <SelectItem value="all">All Agents</SelectItem>
           <SelectItem value="auto">Auto (routing)</SelectItem>
           <SelectItem value="unassigned">Unassigned</SelectItem>
-          {agents.map((a) => (
-            <SelectItem key={a.type} value={a.type}>
-              {a.name}
+          {[...agents.values()].map((agent) => (
+            <SelectItem key={agent.value} value={agent.value}>
+              {agent.label}
             </SelectItem>
           ))}
         </SelectContent>

@@ -120,7 +120,7 @@ router.post(
       message: 'Message sent — agent response incoming',
     });
 
-    // Trigger async AI response via Clawdbot Gateway
+    // Trigger async AI response via the Hermes gateway
     const gatewaySessionKey = `kanban-chat-${sessionId}`;
 
     const agent = input.agent || session.agent || 'veritas';

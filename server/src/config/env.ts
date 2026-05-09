@@ -44,7 +44,7 @@ const booleanString = z
     return val === 'true';
   });
 
-export const envSchema = z.object({
+const baseEnvSchema = z.object({
   // ── Server ──────────────────────────────────────────────────────────
   /** HTTP port the server listens on */
   PORT: portSchema.default('3001'),
@@ -109,8 +109,20 @@ export const envSchema = z.object({
   TELEMETRY_COMPRESS_DAYS: positiveIntString,
 
   // ── External Services ───────────────────────────────────────────────
-  /** Clawdbot gateway URL */
-  CLAWDBOT_GATEWAY: z.string().url().optional().default('http://127.0.0.1:18789'),
+  /** Hermes gateway URL. Prefer this over legacy CLAWDBOT_GATEWAY. */
+  HERMES_GATEWAY: z.string().url().optional(),
+
+  /** Legacy compatibility alias for Hermes gateway URL */
+  CLAWDBOT_GATEWAY: z.string().url().optional(),
+});
+
+export const envSchema = baseEnvSchema.transform((env) => {
+  const hermesGateway = env.HERMES_GATEWAY ?? env.CLAWDBOT_GATEWAY ?? 'http://127.0.0.1:18789';
+  return {
+    ...env,
+    HERMES_GATEWAY: hermesGateway,
+    CLAWDBOT_GATEWAY: env.CLAWDBOT_GATEWAY ?? hermesGateway,
+  };
 });
 
 // ---------------------------------------------------------------------------
@@ -165,7 +177,7 @@ export function validateEnv(): Env {
   _env = result.data;
 
   // Log which env vars are configured (names only, never values)
-  const configuredVars = Object.keys(envSchema.shape)
+  const configuredVars = Object.keys(baseEnvSchema.shape)
     .filter((key) => process.env[key] !== undefined && process.env[key] !== '')
     .sort();
 

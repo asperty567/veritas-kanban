@@ -1,7 +1,7 @@
 /**
- * Clawdbot Webhook Service
+ * Hermes Webhook Service
  *
- * Sends task and chat events to a configured webhook URL (e.g. Clawdbot Gateway)
+ * Sends task and chat events to a configured webhook URL (e.g. Hermes gateway)
  * so an AI agent can react in real-time instead of polling.
  *
  * Features:

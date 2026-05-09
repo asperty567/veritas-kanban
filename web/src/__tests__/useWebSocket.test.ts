@@ -84,6 +84,21 @@ describe('useWebSocket', () => {
     expect(result.current.lastMessage).toEqual({ type: 'task_updated', taskId: '123' });
   });
 
+  it('keeps a quiet but open connection connected', () => {
+    const { result } = renderHook(() => useWebSocket({ url: 'ws://test/ws' }));
+
+    act(() => {
+      ws.latest.simulateOpen();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(result.current.connectionState).toBe('connected');
+    expect(ws.instances).toHaveLength(1);
+  });
+
   it('send() sends JSON to the WebSocket', () => {
     const { result } = renderHook(() => useWebSocket({ url: 'ws://test/ws' }));
 

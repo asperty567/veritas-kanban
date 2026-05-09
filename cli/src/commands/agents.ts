@@ -82,7 +82,7 @@ export function registerAgentCommands(program: Command): void {
   // Get pending agent requests (for Veritas to process)
   program
     .command('agents:pending')
-    .description('List pending agent requests waiting for Clawdbot to process')
+    .description('List pending agent requests waiting for Hermes to process')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       try {
@@ -135,7 +135,7 @@ export function registerAgentCommands(program: Command): void {
       }
     });
 
-  // Complete an agent request (called by Clawdbot after sub-agent finishes)
+  // Complete an agent request (called by Hermes after sub-agent finishes)
   program
     .command('agents:complete <taskId>')
     .description('Mark an agent request as complete')

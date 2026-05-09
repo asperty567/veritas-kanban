@@ -59,7 +59,7 @@ export function registerAutomationCommands(program: Command): void {
     .command('automation:start <id>')
     .alias('as')
     .description('Start an automation task via Veritas sub-agent')
-    .option('-s, --session <key>', 'Clawdbot session key')
+    .option('-s, --session <key>', 'Hermes session key')
     .option('--json', 'Output as JSON')
     .action(async (id, options) => {
       try {

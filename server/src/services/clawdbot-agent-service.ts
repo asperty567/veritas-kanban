@@ -1,13 +1,14 @@
 /**
- * ClawdbotAgentService - Delegates agent work to Clawdbot's sessions_spawn
+ * HermesAgentService - delegates agent work to Hermes sub-agents
  *
  * Instead of managing PTY processes directly, this service:
- * 1. Sends a task request to the main Veritas session
- * 2. Veritas spawns a sub-agent with proper PTY handling
+ * 1. Sends a task request to the main Hermes/Veritas session
+ * 2. Hermes spawns a sub-agent with proper PTY handling
  * 3. Sub-agent works in the task's worktree
  * 4. On completion, Veritas calls back to update the task
  *
- * This keeps agent management simple and leverages Clawdbot's existing infrastructure.
+ * This keeps agent management simple and leverages Hermes infrastructure.
+ * Legacy Clawdbot export names remain compatibility aliases only.
  */
 
 import { EventEmitter } from 'events';
@@ -25,7 +26,12 @@ const log = createLogger('clawdbot-agent-service');
 
 const PROJECT_ROOT = path.resolve(process.cwd(), '..');
 const LOGS_DIR = path.join(PROJECT_ROOT, '.veritas-kanban', 'logs');
-const CLAWDBOT_GATEWAY = process.env.CLAWDBOT_GATEWAY || 'http://127.0.0.1:18789';
+const HERMES_GATEWAY =
+  process.env.HERMES_GATEWAY ||
+  process.env.HERMES_GATEWAY_URL ||
+  process.env.CLAWDBOT_GATEWAY ||
+  'http://127.0.0.1:18789';
+void HERMES_GATEWAY;
 
 export interface AgentStatus {
   taskId: string;
@@ -54,7 +60,7 @@ const pendingAgents = new Map<
   }
 >();
 
-export class ClawdbotAgentService {
+export class HermesAgentService {
   private configService: ConfigService;
   private taskService: TaskService;
   private logsDir: string;
@@ -75,7 +81,7 @@ export class ClawdbotAgentService {
   }
 
   /**
-   * Start an agent on a task by delegating to Clawdbot
+   * Start an agent on a task by delegating to Hermes
    */
   async startAgent(taskId: string, agentType?: AgentType): Promise<AgentStatus> {
     // Get task
@@ -108,7 +114,7 @@ export class ClawdbotAgentService {
       agent = result.agent;
       routingReason = result.reason;
       log.info(
-        `[ClawdbotAgent] Routing resolved agent for task ${taskId}: ${agent} (${routingReason})`
+        `[HermesAgent] Routing resolved agent for task ${taskId}: ${agent} (${routingReason})`
       );
     } else {
       agent = agentType;
@@ -135,7 +141,7 @@ export class ClawdbotAgentService {
     validatePathSegment(taskId);
     validatePathSegment(attemptId);
 
-    // Build the task prompt for Clawdbot
+    // Build the task prompt for Hermes
     const worktreePath = this.expandPath(task.git.worktreePath);
     const taskPrompt = this.buildTaskPrompt(task, worktreePath, attemptId);
 
@@ -156,11 +162,11 @@ export class ClawdbotAgentService {
       attempt,
     });
 
-    // Send request to Clawdbot main session (wrapped in circuit breaker)
-    // This will be picked up by Veritas who will spawn the actual sub-agent
+    // Send request to Hermes main session (wrapped in circuit breaker)
+    // This will be picked up by Veritas/Hermes who will spawn the actual sub-agent
     const agentBreaker = getBreaker('agent');
     try {
-      await agentBreaker.execute(() => this.sendToClawdbot(taskPrompt, taskId, attemptId));
+      await agentBreaker.execute(() => this.sendToHermes(taskPrompt, taskId, attemptId));
     } catch (error: any) {
       // Clean up on failure
       pendingAgents.delete(taskId);
@@ -168,7 +174,7 @@ export class ClawdbotAgentService {
         status: 'todo',
         attempt: { ...attempt, status: 'failed', ended: new Date().toISOString() },
       });
-      throw new Error(`Failed to start agent via Clawdbot: ${error.message}`);
+      throw new Error(`Failed to start agent via Hermes: ${error.message}`);
     }
 
     return {
@@ -181,10 +187,10 @@ export class ClawdbotAgentService {
   }
 
   /**
-   * Send task request to Clawdbot main session
-   * Uses the webchat API endpoint
+   * Send task request to Hermes main session.
+   * Uses the file-backed request queue monitored by Veritas/Hermes.
    */
-  private async sendToClawdbot(prompt: string, taskId: string, attemptId: string): Promise<void> {
+  private async sendToHermes(prompt: string, taskId: string, attemptId: string): Promise<void> {
     // Validate path segments to prevent directory traversal
     validatePathSegment(taskId);
     validatePathSegment(attemptId);
@@ -212,14 +218,14 @@ export class ClawdbotAgentService {
       )
     );
 
-    log.info(`[ClawdbotAgent] Wrote agent request for task ${taskId} to ${requestFile}`);
+    log.info(`[HermesAgent] Wrote agent request for task ${taskId} to ${requestFile}`);
     log.info(
-      `[ClawdbotAgent] Veritas should pick this up on next heartbeat or you can trigger manually`
+      `[HermesAgent] Veritas/Hermes should pick this up on next heartbeat or you can trigger manually`
     );
   }
 
   /**
-   * Handle completion callback from Clawdbot sub-agent
+   * Handle completion callback from Hermes sub-agent
    */
   async completeAgent(
     taskId: string,
@@ -227,7 +233,7 @@ export class ClawdbotAgentService {
   ): Promise<void> {
     const pending = pendingAgents.get(taskId);
     if (!pending) {
-      log.warn(`[ClawdbotAgent] Received completion for unknown task ${taskId}`);
+      log.warn(`[HermesAgent] Received completion for unknown task ${taskId}`);
       return;
     }
 
@@ -271,7 +277,7 @@ export class ClawdbotAgentService {
       // Ignore if already deleted
     }
 
-    log.info(`[ClawdbotAgent] Task ${taskId} completed with status: ${status}`);
+    log.info(`[HermesAgent] Task ${taskId} completed with status: ${status}`);
   }
 
   /**
@@ -424,7 +430,7 @@ If you encounter errors, call with \`success: false\` and include the error mess
     const header = `# Agent Log: ${task.title}
 
 **Task ID:** ${task.id}
-**Agent:** ${agent} (via Clawdbot)
+**Agent:** ${agent} (via Hermes)
 **Started:** ${new Date().toISOString()}
 **Worktree:** ${task.git?.worktreePath}
 
@@ -436,12 +442,14 @@ ${prompt}
 
 ## Progress
 
-*Agent is working via Clawdbot sub-agent...*
+*Agent is working via Hermes sub-agent...*
 
 `;
     await fs.writeFile(logPath, header, 'utf-8');
   }
 }
 
-// Export singleton
-export const clawdbotAgentService = new ClawdbotAgentService();
+// Export singleton with Hermes-native name plus legacy compatibility aliases.
+export const hermesAgentService = new HermesAgentService();
+export const clawdbotAgentService = hermesAgentService;
+export { HermesAgentService as ClawdbotAgentService };
