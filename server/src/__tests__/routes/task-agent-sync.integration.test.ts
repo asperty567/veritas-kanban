@@ -52,14 +52,14 @@ describe('Task ↔ Agent registry sync (route-level integration)', () => {
   });
 
   it('syncs agent busy/idle state from task route transitions with registry readback', async () => {
-    const agentId = 'route-sync-agent-1';
+    const agentId = 'hawk';
 
     // 1) Register agent.
     const reg = await request(app)
       .post('/api/agents/register')
       .send({
         id: agentId,
-        name: 'Route Sync Agent',
+        name: 'Hawk',
         capabilities: [{ name: 'code' }],
       });
 

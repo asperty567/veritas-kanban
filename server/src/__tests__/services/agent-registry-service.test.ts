@@ -650,6 +650,45 @@ describe('AgentRegistryService', () => {
     });
   });
 
+  describe('runtimeList()', () => {
+    it('returns canonical HermesAgent runtime roster and filters stale historical labels', () => {
+      const service = getAgentRegistryService();
+      service.register({ id: 'ops', name: 'Ops', capabilities: [{ name: 'legacy' }] });
+      service.register({ id: 'hawk', name: 'Hawk', capabilities: [{ name: 'ops' }] });
+
+      const agents = service.runtimeList();
+
+      expect(agents.map((agent) => agent.id)).toEqual([
+        'default',
+        'hawk',
+        'blitz',
+        'aura',
+        'forge',
+        'midas',
+        'orbit',
+        'signal',
+      ]);
+      expect(agents.find((agent) => agent.id === 'ops')).toBeUndefined();
+      expect(agents.find((agent) => agent.id === 'default')?.status).toBe('online');
+      expect(agents.find((agent) => agent.id === 'hawk')?.status).toBe('online');
+      expect(agents.find((agent) => agent.id === 'blitz')?.status).toBe('online');
+      expect(agents.find((agent) => agent.id === 'aura')?.status).toBe('offline');
+    });
+
+    it('runtimeStats counts HermesAgent profiles, not historical registry rows', () => {
+      const service = getAgentRegistryService();
+      service.register({ id: 'qa', name: 'QA', capabilities: [{ name: 'legacy' }] });
+      service.register({ id: 'blitz', name: 'Blitz', capabilities: [{ name: 'code' }] });
+
+      const stats = service.runtimeStats();
+
+      expect(stats.total).toBe(8);
+      expect(stats.online).toBe(3);
+      expect(stats.offline).toBe(5);
+      expect(stats.capabilities).not.toContain('legacy');
+    });
+  });
+
   describe('deregister()', () => {
     it('should remove an agent', () => {
       const service = getAgentRegistryService();

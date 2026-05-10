@@ -16,6 +16,7 @@ const mockRegistryAgents = vi.hoisted(() => ({ value: [] as any[] }));
 vi.mock('../../services/agent-registry-service.js', () => ({
   getAgentRegistryService: () => ({
     list: () => mockRegistryAgents.value,
+    runtimeList: () => mockRegistryAgents.value,
   }),
 }));
 

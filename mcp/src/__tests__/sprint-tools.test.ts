@@ -1,18 +1,21 @@
 /**
- * MCP Sprint Tools — Integration Tests
+ * MCP Sprint Tools — Unit Tests
  *
- * Tests the sprint tool handlers against the live VK server (localhost:3001).
- * These are integration tests, not unit tests — they verify the full MCP → HTTP → VK pipeline.
- *
- * Covers: list, create, get, update, delete (with and without force), can_delete, reorder.
+ * Tests tool definitions, Zod validation, and mocked API calls.
+ * Does NOT require a running server — all API calls are mocked.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleSprintTool, sprintTools } from '../tools/sprints.js';
 
-// Helper: parse JSON from tool response content
+vi.mock('../utils/api.js', () => ({
+  api: vi.fn(),
+}));
+
+import { api } from '../utils/api.js';
+const mockApi = vi.mocked(api);
+
 function parseToolResponse(result: any): any {
   const text = result.content[0].text;
-  // Some responses have a prefix line before JSON (e.g., "Sprint created: ...")
   const jsonStart = text.indexOf('{');
   const jsonArrayStart = text.indexOf('[');
   const start =
@@ -26,17 +29,8 @@ function parseToolResponse(result: any): any {
 }
 
 describe('Sprint MCP Tools', () => {
-  const testSprintIds: string[] = [];
-
-  afterAll(async () => {
-    // Cleanup: force-delete any test sprints we created
-    for (const id of testSprintIds) {
-      try {
-        await handleSprintTool('delete_sprint', { id, force: true });
-      } catch {
-        // Sprint may already be deleted — that's fine
-      }
-    }
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   describe('Tool definitions', () => {
@@ -69,93 +63,105 @@ describe('Sprint MCP Tools', () => {
 
     it('should have force as optional on delete_sprint', () => {
       const tool = sprintTools.find((t) => t.name === 'delete_sprint');
-      expect(tool?.inputSchema.properties.force).toBeDefined();
-      expect(tool?.inputSchema.properties.force.type).toBe('boolean');
-      // force is NOT in required — it's optional
+      const forceProperty = tool?.inputSchema.properties.force;
+      expect(forceProperty).toBeDefined();
+      expect(forceProperty?.type).toBe('boolean');
       expect(tool?.inputSchema.required).not.toContain('force');
     });
   });
 
   describe('list_sprints', () => {
     it('should return an array of sprints', async () => {
+      mockApi.mockResolvedValueOnce([{ id: 'sprint-1', label: 'Sprint 1' }] as any);
       const result = await handleSprintTool('list_sprints', {});
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints');
       const sprints = parseToolResponse(result);
       expect(Array.isArray(sprints)).toBe(true);
     });
 
     it('should accept empty args', async () => {
+      mockApi.mockResolvedValueOnce([] as any);
       const result = await handleSprintTool('list_sprints', undefined);
       expect(result.content[0].type).toBe('text');
+    });
+
+    it('should pass includeHidden query param when true', async () => {
+      mockApi.mockResolvedValueOnce([] as any);
+      await handleSprintTool('list_sprints', { includeHidden: true });
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints?includeHidden=true');
     });
   });
 
   describe('create_sprint + get_sprint + delete_sprint lifecycle', () => {
-    let createdId: string;
-
     it('should create a sprint', async () => {
+      const created = {
+        id: 'sprint-created',
+        label: '__test_sprint_lifecycle',
+        description: 'Integration test sprint — safe to delete',
+      };
+      mockApi.mockResolvedValueOnce(created as any);
+
       const result = await handleSprintTool('create_sprint', {
         label: '__test_sprint_lifecycle',
         description: 'Integration test sprint — safe to delete',
       });
 
+      expect(mockApi).toHaveBeenCalledWith(
+        '/api/sprints',
+        expect.objectContaining({ method: 'POST' })
+      );
       const sprint = parseToolResponse(result);
       expect(sprint.label).toBe('__test_sprint_lifecycle');
       expect(sprint.description).toBe('Integration test sprint — safe to delete');
-      expect(sprint.id).toBeDefined();
-      createdId = sprint.id;
-      testSprintIds.push(createdId);
+      expect(sprint.id).toBe('sprint-created');
     });
 
     it('should get the created sprint', async () => {
-      const result = await handleSprintTool('get_sprint', { id: createdId });
+      mockApi.mockResolvedValueOnce({
+        id: 'sprint-created',
+        label: '__test_sprint_lifecycle',
+      } as any);
+      const result = await handleSprintTool('get_sprint', { id: 'sprint-created' });
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints/sprint-created');
       const sprint = parseToolResponse(result);
-      expect(sprint.id).toBe(createdId);
+      expect(sprint.id).toBe('sprint-created');
       expect(sprint.label).toBe('__test_sprint_lifecycle');
     });
 
     it('should update the sprint', async () => {
+      mockApi.mockResolvedValueOnce({
+        id: 'sprint-created',
+        label: '__test_sprint_updated',
+        isHidden: true,
+      } as any);
       const result = await handleSprintTool('update_sprint', {
-        id: createdId,
+        id: 'sprint-created',
         label: '__test_sprint_updated',
         isHidden: true,
       });
+      expect(mockApi).toHaveBeenCalledWith(
+        '/api/sprints/sprint-created',
+        expect.objectContaining({ method: 'PATCH' })
+      );
       const sprint = parseToolResponse(result);
       expect(sprint.label).toBe('__test_sprint_updated');
       expect(sprint.isHidden).toBe(true);
     });
 
-    it('should appear in list when includeHidden=true', async () => {
-      const result = await handleSprintTool('list_sprints', { includeHidden: true });
-      const sprints = parseToolResponse(result);
-      const found = sprints.find((s: any) => s.id === createdId);
-      expect(found).toBeDefined();
-    });
-
     it('should delete the sprint', async () => {
-      const result = await handleSprintTool('delete_sprint', { id: createdId });
+      mockApi.mockResolvedValueOnce(undefined as any);
+      const result = await handleSprintTool('delete_sprint', { id: 'sprint-created' });
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints/sprint-created', { method: 'DELETE' });
       expect(result.content[0].text).toContain('deleted');
-      // Remove from cleanup list since we already deleted it
-      const idx = testSprintIds.indexOf(createdId);
-      if (idx !== -1) testSprintIds.splice(idx, 1);
     });
   });
 
   describe('can_delete_sprint', () => {
-    let sprintId: string;
-
-    beforeAll(async () => {
-      const result = await handleSprintTool('create_sprint', {
-        label: '__test_can_delete',
-      });
-      const sprint = parseToolResponse(result);
-      sprintId = sprint.id;
-      testSprintIds.push(sprintId);
-    });
-
     it('should report whether sprint can be deleted', async () => {
-      const result = await handleSprintTool('can_delete_sprint', { id: sprintId });
+      mockApi.mockResolvedValueOnce({ allowed: true, referenceCount: 0 } as any);
+      const result = await handleSprintTool('can_delete_sprint', { id: 'sprint-created' });
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints/sprint-created/can-delete');
       const data = parseToolResponse(result);
-      // API returns `allowed` (not `canDelete`) with reference info
       const canDelete = data.canDelete ?? data.allowed;
       expect(canDelete).toBeDefined();
       expect(typeof canDelete).toBe('boolean');
@@ -164,36 +170,42 @@ describe('Sprint MCP Tools', () => {
 
   describe('force delete behavior', () => {
     it('should accept force=true flag', async () => {
-      // Create a sprint we can force-delete
-      const createResult = await handleSprintTool('create_sprint', {
-        label: '__test_force_delete',
-      });
-      const sprint = parseToolResponse(createResult);
-      testSprintIds.push(sprint.id);
-
-      // Force delete should succeed regardless of references
-      const deleteResult = await handleSprintTool('delete_sprint', {
-        id: sprint.id,
+      mockApi.mockResolvedValueOnce(undefined as any);
+      const result = await handleSprintTool('delete_sprint', {
+        id: 'sprint-force-delete',
         force: true,
       });
-      expect(deleteResult.content[0].text).toContain('deleted');
-
-      const idx = testSprintIds.indexOf(sprint.id);
-      if (idx !== -1) testSprintIds.splice(idx, 1);
+      expect(mockApi).toHaveBeenCalledWith('/api/sprints/sprint-force-delete?force=true', {
+        method: 'DELETE',
+      });
+      expect(result.content[0].text).toContain('deleted');
     });
   });
 
   describe('get_archive_suggestions', () => {
-    it('should return an array', async () => {
+    it('should return no-suggestions text for an empty array', async () => {
+      mockApi.mockResolvedValueOnce([] as any);
       const result = await handleSprintTool('get_archive_suggestions', {});
-      const text = result.content[0].text;
-      // Either "No sprints ready to archive" or a JSON array
-      if (text.includes('No sprints')) {
-        expect(text).toBe('No sprints ready to archive');
-      } else {
-        const data = JSON.parse(text);
-        expect(Array.isArray(data)).toBe(true);
-      }
+      expect(mockApi).toHaveBeenCalledWith('/api/tasks/archive/suggestions');
+      expect(result.content[0].text).toBe('No sprints ready to archive');
+    });
+
+    it('should return a JSON array when suggestions exist', async () => {
+      mockApi.mockResolvedValueOnce([{ sprint: 'sprint-1', taskCount: 1, tasks: [] }] as any);
+      const result = await handleSprintTool('get_archive_suggestions', {});
+      const data = JSON.parse(result.content[0].text);
+      expect(Array.isArray(data)).toBe(true);
+    });
+  });
+
+  describe('close_sprint', () => {
+    it('should archive completed tasks in a sprint', async () => {
+      mockApi.mockResolvedValueOnce({ archived: 2, taskIds: ['task-1', 'task-2'] } as any);
+      const result = await handleSprintTool('close_sprint', { id: 'sprint-created' });
+      expect(mockApi).toHaveBeenCalledWith('/api/tasks/archive/sprint/sprint-created', {
+        method: 'POST',
+      });
+      expect(result.content[0].text).toContain('Archived 2 task(s)');
     });
   });
 

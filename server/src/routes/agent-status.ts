@@ -231,7 +231,7 @@ function registryStatusToAgentStatus(status: RegisteredAgent['status']): AgentSt
 function getRegistryActiveAgents(): ActiveAgent[] {
   try {
     return getAgentRegistryService()
-      .list()
+      .runtimeList()
       .filter((agent) => agent.status !== 'offline')
       .map((agent) => ({
         agent: agent.name || agent.id,

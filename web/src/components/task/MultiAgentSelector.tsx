@@ -2,14 +2,15 @@
  * MultiAgentSelector — Select multiple agents for a task
  *
  * Shows assigned agents as removable chips with an "Add Agent" dropdown.
- * Supports both registry agents and custom agent names.
+ * Options are limited to the canonical HermesAgent runtime roster.
  */
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { AgentType } from '@veritas-kanban/shared';
-import { X, Plus, UserPlus, Bot } from 'lucide-react';
+import { HERMES_AGENT_ROSTER, isHermesAgentId } from '@veritas-kanban/shared';
+import { X, Plus, Bot } from 'lucide-react';
 
 interface MultiAgentSelectorProps {
   /** Currently assigned agents */
@@ -42,7 +43,6 @@ export function MultiAgentSelector({
   compact = false,
 }: MultiAgentSelectorProps) {
   const [showDropdown, setShowDropdown] = useState(false);
-  const [customInput, setCustomInput] = useState('');
 
   // Fetch registered agents from registry
   const { data: registeredAgents = [] } = useQuery({
@@ -52,35 +52,33 @@ export function MultiAgentSelector({
     retry: 1,
   });
 
-  const availableAgents = registeredAgents
-    .filter((a) => !agents.includes(a.id) && !agents.includes(a.name))
-    .map((a) => ({ id: a.id, name: a.name, model: a.model }));
+  const availableAgents = HERMES_AGENT_ROSTER.filter((id) => !agents.includes(id as AgentType)).map(
+    (id) => {
+      const registryAgent = registeredAgents.find(
+        (a) => a.id === id || a.name.toLowerCase() === id
+      );
+      return { id, name: registryAgent?.name || id, model: registryAgent?.model };
+    }
+  );
 
   const addAgent = (agentId: string) => {
-    const newAgents = [...agents, agentId];
-    const primary = newAgents.length === 1 ? agentId : primaryAgent;
+    const normalized = agentId.trim().toLowerCase();
+    if (!isHermesAgentId(normalized) || agents.includes(normalized as AgentType)) return;
+    const newAgents = [...agents, normalized as AgentType];
+    const primary = newAgents.length === 1 ? normalized : primaryAgent;
     onChange(newAgents, primary);
     setShowDropdown(false);
-    setCustomInput('');
   };
 
   const removeAgent = (agentId: string) => {
     const newAgents = agents.filter((a) => a !== agentId);
     // If we removed the primary, promote next
-    const primary =
-      primaryAgent === agentId ? newAgents[0] || undefined : primaryAgent;
+    const primary = primaryAgent === agentId ? newAgents[0] || undefined : primaryAgent;
     onChange(newAgents, primary);
   };
 
   const setPrimary = (agentId: string) => {
     onChange(agents, agentId);
-  };
-
-  const addCustom = () => {
-    const trimmed = customInput.trim().toLowerCase();
-    if (trimmed && !agents.includes(trimmed)) {
-      addAgent(trimmed);
-    }
   };
 
   return (
@@ -110,9 +108,7 @@ export function MultiAgentSelector({
             >
               <Bot className="w-3 h-3" />
               {agent}
-              {isPrimary && (
-                <span className="text-[8px] font-bold opacity-60">★</span>
-              )}
+              {isPrimary && <span className="text-[8px] font-bold opacity-60">★</span>}
               <button
                 className="ml-0.5 hover:bg-white/20 rounded-full p-0.5 transition-colors"
                 onClick={(e) => {
@@ -139,11 +135,11 @@ export function MultiAgentSelector({
       {/* Dropdown */}
       {showDropdown && (
         <div className="bg-popover border rounded-lg shadow-lg p-2 space-y-1 max-h-[200px] overflow-y-auto">
-          {/* Registry agents */}
+          {/* HermesAgent roster */}
           {availableAgents.length > 0 && (
             <>
               <div className="text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider px-1">
-                Registered
+                HermesAgent profiles
               </div>
               {availableAgents.map((agent) => (
                 <button
@@ -165,28 +161,6 @@ export function MultiAgentSelector({
               ))}
             </>
           )}
-
-          {/* Custom agent input */}
-          <div className="text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider px-1 pt-1">
-            Custom
-          </div>
-          <div className="flex items-center gap-1">
-            <input
-              type="text"
-              className="flex-1 text-xs px-2 py-1 rounded border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="Agent name..."
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addCustom()}
-              autoFocus
-            />
-            <button
-              className="p-1 rounded hover:bg-muted/50 text-muted-foreground"
-              onClick={addCustom}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-            </button>
-          </div>
         </div>
       )}
     </div>

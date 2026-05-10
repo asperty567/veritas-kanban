@@ -37,7 +37,7 @@ const registerSchema = z.object({
 });
 
 const heartbeatSchema = z.object({
-  status: z.enum(['online', 'busy', 'idle']).optional(),
+  status: z.enum(['online', 'busy', 'idle', 'offline']).optional(),
   currentTaskId: z.string().max(100).optional().nullable(),
   currentTaskTitle: z.string().max(200).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -53,7 +53,7 @@ router.get(
   '/stats',
   asyncHandler(async (_req, res) => {
     const registry = getAgentRegistryService();
-    res.json(registry.stats());
+    res.json(registry.runtimeStats());
   })
 );
 
@@ -96,7 +96,7 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const registry = getAgentRegistryService();
-    const agents = registry.list({
+    const agents = registry.runtimeList({
       status: req.query.status as string | undefined,
       capability: req.query.capability as string | undefined,
     });

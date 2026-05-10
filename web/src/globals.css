@@ -167,3 +167,45 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
+
+/* Veritas board responsive layout.
+   Keep this in source CSS so mobile board behavior survives deploys/repo updates. */
+.veritas-board-layout,
+.veritas-kanban-board,
+.veritas-kanban-columns {
+  min-width: 0;
+}
+
+.veritas-kanban-columns {
+  align-items: start;
+}
+
+@media (max-width: 767.98px) {
+  .veritas-board-layout {
+    display: flex !important;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .veritas-kanban-board,
+  .veritas-kanban-columns {
+    width: 100%;
+  }
+
+  .veritas-kanban-columns {
+    display: flex !important;
+    flex-direction: column;
+    overflow-x: visible;
+  }
+
+  .veritas-kanban-columns > [role='region'] {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .veritas-kanban-column-scroll {
+    min-height: 0 !important;
+    max-height: none;
+    overflow-y: visible;
+  }
+}

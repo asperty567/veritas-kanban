@@ -1,11 +1,25 @@
 /**
- * MCP Task Tools — Integration Tests
+ * MCP Task Tools — Unit Tests
  *
- * Tests the task tool handlers against the live VK server (localhost:3001).
- * Covers: list (with project/status/type filters), create, get, update, delete.
+ * Tests tool definitions, Zod validation, and mocked API calls.
+ * Does NOT require a running server — all API calls are mocked.
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleTaskTool, taskTools } from '../tools/tasks.js';
+
+vi.mock('../utils/api.js', () => ({
+  api: vi.fn(),
+}));
+
+vi.mock('../utils/find.js', () => ({
+  findTask: vi.fn(),
+}));
+
+import { api } from '../utils/api.js';
+import { findTask } from '../utils/find.js';
+
+const mockApi = vi.mocked(api);
+const mockFindTask = vi.mocked(findTask);
 
 function parseToolResponse(result: any): any {
   const text = result.content[0].text;
@@ -22,16 +36,8 @@ function parseToolResponse(result: any): any {
 }
 
 describe('Task MCP Tools', () => {
-  const testTaskIds: string[] = [];
-
-  afterAll(async () => {
-    for (const id of testTaskIds) {
-      try {
-        await handleTaskTool('delete_task', { id });
-      } catch {
-        // Already deleted
-      }
-    }
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   describe('Tool definitions', () => {
@@ -68,30 +74,42 @@ describe('Task MCP Tools', () => {
   });
 
   describe('list_tasks', () => {
+    const mockTasks = [
+      { id: 'task-1', status: 'done', type: 'code', project: 'alpha', sprint: 's1' },
+      { id: 'task-2', status: 'todo', type: 'research', project: 'beta', sprint: 's2' },
+      { id: 'task-3', status: 'done', type: 'research', project: 'alpha', sprint: 's2' },
+    ];
+
     it('should return an array', async () => {
+      mockApi.mockResolvedValueOnce(mockTasks as any);
       const result = await handleTaskTool('list_tasks', {});
+      expect(mockApi).toHaveBeenCalledWith('/api/tasks');
       const tasks = parseToolResponse(result);
       expect(Array.isArray(tasks)).toBe(true);
     });
 
     it('should filter by status', async () => {
+      mockApi.mockResolvedValueOnce(mockTasks as any);
       const result = await handleTaskTool('list_tasks', { status: 'done' });
       const tasks = parseToolResponse(result);
-      expect(Array.isArray(tasks)).toBe(true);
+      expect(tasks).toHaveLength(2);
       for (const task of tasks) {
         expect(task.status).toBe('done');
       }
     });
 
     it('should filter by type', async () => {
-      const result = await handleTaskTool('list_tasks', { type: 'code' });
+      mockApi.mockResolvedValueOnce(mockTasks as any);
+      const result = await handleTaskTool('list_tasks', { type: 'research' });
       const tasks = parseToolResponse(result);
+      expect(tasks).toHaveLength(2);
       for (const task of tasks) {
-        expect(task.type).toBe('code');
+        expect(task.type).toBe('research');
       }
     });
 
     it('should filter by project', async () => {
+      mockApi.mockResolvedValueOnce(mockTasks as any);
       const result = await handleTaskTool('list_tasks', { project: '__nonexistent_project__' });
       const tasks = parseToolResponse(result);
       expect(tasks).toHaveLength(0);
@@ -99,52 +117,77 @@ describe('Task MCP Tools', () => {
   });
 
   describe('create + get + update + delete lifecycle', () => {
-    let taskId: string;
-
     it('should create a task', async () => {
+      const created = {
+        id: 'task-created',
+        title: '__mcp_test_task',
+        type: 'research',
+        priority: 'low',
+      };
+      mockApi.mockResolvedValueOnce(created as any);
+
       const result = await handleTaskTool('create_task', {
         title: '__mcp_test_task',
         type: 'research',
         priority: 'low',
         description: 'Integration test task — safe to delete',
       });
+
+      expect(mockApi).toHaveBeenCalledWith(
+        '/api/tasks',
+        expect.objectContaining({ method: 'POST' })
+      );
       const task = parseToolResponse(result);
       expect(task.title).toBe('__mcp_test_task');
       expect(task.type).toBe('research');
       expect(task.priority).toBe('low');
-      expect(task.id).toBeDefined();
-      taskId = task.id;
-      testTaskIds.push(taskId);
+      expect(task.id).toBe('task-created');
     });
 
     it('should get the created task', async () => {
-      const result = await handleTaskTool('get_task', { id: taskId });
+      mockFindTask.mockResolvedValueOnce({ id: 'task-created', title: '__mcp_test_task' } as any);
+      const result = await handleTaskTool('get_task', { id: 'task-created' });
+      expect(mockFindTask).toHaveBeenCalledWith('task-created');
       const task = parseToolResponse(result);
-      expect(task.id).toBe(taskId);
+      expect(task.id).toBe('task-created');
       expect(task.title).toBe('__mcp_test_task');
     });
 
     it('should update the task', async () => {
+      mockFindTask.mockResolvedValueOnce({ id: 'task-created', title: '__mcp_test_task' } as any);
+      mockApi.mockResolvedValueOnce({
+        id: 'task-created',
+        status: 'in-progress',
+        priority: 'high',
+      } as any);
+
       const result = await handleTaskTool('update_task', {
-        id: taskId,
+        id: 'task-created',
         status: 'in-progress',
         priority: 'high',
       });
+
+      expect(mockApi).toHaveBeenCalledWith(
+        '/api/tasks/task-created',
+        expect.objectContaining({ method: 'PATCH' })
+      );
       const task = parseToolResponse(result);
       expect(task.status).toBe('in-progress');
       expect(task.priority).toBe('high');
     });
 
     it('should delete the task', async () => {
-      const result = await handleTaskTool('delete_task', { id: taskId });
+      mockFindTask.mockResolvedValueOnce({ id: 'task-created', title: '__mcp_test_task' } as any);
+      mockApi.mockResolvedValueOnce(undefined as any);
+      const result = await handleTaskTool('delete_task', { id: 'task-created' });
+      expect(mockApi).toHaveBeenCalledWith('/api/tasks/task-created', { method: 'DELETE' });
       expect(result.content[0].text).toContain('deleted');
-      const idx = testTaskIds.indexOf(taskId);
-      if (idx !== -1) testTaskIds.splice(idx, 1);
     });
   });
 
   describe('error handling', () => {
     it('should return isError for nonexistent task', async () => {
+      mockFindTask.mockResolvedValueOnce(null);
       const result = await handleTaskTool('get_task', { id: 'nonexistent_id_12345' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
