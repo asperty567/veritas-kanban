@@ -26,11 +26,13 @@ export async function getSession(sessionId: string): Promise<ChatSession> {
 
 /**
  * Chat send response from the API
- * (Not a full ChatSession — agent response streams via WebSocket)
+ * (Not a full ChatSession — Hermes execution is tracked by run metadata)
  */
 export interface ChatSendResponse {
   sessionId: string;
   messageId: string;
+  runId: string;
+  runStatus: string;
   message: string;
 }
 

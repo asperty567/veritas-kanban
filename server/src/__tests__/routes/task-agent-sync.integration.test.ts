@@ -94,7 +94,30 @@ describe('Task ↔ Agent registry sync (route-level integration)', () => {
     // Test forces flap guard to 0ms (VERITAS_TASK_SYNC_FLAP_GUARD_MS) for deterministic timing.
     const toDone = await request(app)
       .patch(`/api/tasks/${createdTask.id}`)
-      .send({ status: 'done' });
+      .send({
+        status: 'done',
+        reviewScores: [10, 10, 10, 10],
+        reviewComments: [
+          {
+            id: 'review-route-sync-done',
+            file: 'server/src/__tests__/routes/task-agent-sync.integration.test.ts',
+            line: 95,
+            content: 'Route sync smoke completed with required deliverable evidence.',
+            created: new Date().toISOString(),
+          },
+        ],
+        deliverables: [
+          {
+            id: 'deliverable-route-sync-smoke',
+            title: 'Route sync completion evidence',
+            type: 'report',
+            path: 'file:///tmp/veritas-task-agent-sync/route-sync-smoke.md',
+            status: 'attached',
+            created: new Date().toISOString(),
+            description: 'Test deliverable required by completion gate',
+          },
+        ],
+      });
     expect(toDone.status).toBe(200);
 
     const agentIdle = await request(app).get(`/api/agents/register/${agentId}`);

@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
 import { watch, batchedMap, type FSWatcher } from '../storage/fs-helpers.js';
 import path from 'path';
+import { execFile as execFileCallback } from 'child_process';
+import { promisify } from 'util';
 import matter from 'gray-matter';
 import { nanoid } from 'nanoid';
 import type {
@@ -36,6 +38,11 @@ import { getTasksActiveDir, getTasksArchiveDir } from '../utils/paths.js';
 const log = createLogger('task-cache');
 const TASK_SYNC_CONTEXT: TaskSyncContext = createTaskSyncToken('task-service');
 const TASK_RECONCILE_CONTEXT: TaskSyncContext = createTaskSyncToken('task-reconciler');
+const execFileAsync = promisify(execFileCallback);
+const LEGACY_RUNTIME_ENV_KEYS = ['CLAWDBOT_GATEWAY'] as const;
+const DEAD_RUNTIME_TARGETS = ['127.0.0.1:9', 'localhost:9'] as const;
+const GIT_DISCIPLINE_CODE = 'GIT_DISCIPLINE_GATE';
+const RUNTIME_DISCIPLINE_CODE = 'RUNTIME_DISCIPLINE_GATE';
 
 /**
  * Task ID format validation
@@ -61,6 +68,105 @@ function makeSlug(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 50);
+}
+
+function redactRuntimeValue(value: string): string {
+  return value.replace(/[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+/g, (token) => {
+    if (DEAD_RUNTIME_TARGETS.some((target) => token.includes(target))) {
+      return token;
+    }
+    if (token.startsWith('http://') || token.startsWith('https://')) {
+      try {
+        const url = new URL(token);
+        return `${url.protocol}//${url.host}`;
+      } catch {
+        return '[REDACTED]';
+      }
+    }
+    return token.length > 32 ? '[REDACTED]' : token;
+  });
+}
+
+function buildTaskWithMergedUpdates(
+  task: Task,
+  restInput: Omit<UpdateTaskInput, 'git' | 'github' | 'blockedReason'>,
+  gitUpdate: UpdateTaskInput['git'],
+  githubUpdate: UpdateTaskInput['github'],
+  blockedReasonUpdate: UpdateTaskInput['blockedReason']
+): Task {
+  return {
+    ...task,
+    ...restInput,
+    git: gitUpdate ? ({ ...task.git, ...gitUpdate } as Task['git']) : task.git,
+    github: githubUpdate ?? task.github,
+    blockedReason:
+      blockedReasonUpdate === null ? undefined : (blockedReasonUpdate ?? task.blockedReason),
+  };
+}
+
+async function getGitStatusPorcelain(worktreePath: string): Promise<string> {
+  const { stdout } = await execFileAsync(
+    'git',
+    ['status', '--porcelain=v1', '--untracked-files=normal'],
+    { cwd: worktreePath, timeout: 5000, maxBuffer: 1024 * 1024 }
+  );
+  return stdout;
+}
+
+async function assertCompletionDiscipline(task: Task): Promise<void> {
+  for (const key of LEGACY_RUNTIME_ENV_KEYS) {
+    const value = process.env[key];
+    if (!value) continue;
+
+    const displayValue = redactRuntimeValue(value);
+    const deadTarget = DEAD_RUNTIME_TARGETS.find((target) => value.includes(target));
+    const message = deadTarget
+      ? `Runtime Discipline Gate: legacy runtime env ${key} points at retired/dead target ${displayValue}`
+      : `Runtime Discipline Gate: legacy runtime env ${key} is set (${displayValue}); use HERMES_API_SERVER_URL instead`;
+    throw new ValidationError(message, [
+      {
+        code: RUNTIME_DISCIPLINE_CODE,
+        message,
+        path: ['status'],
+      },
+    ]);
+  }
+
+  const worktreePath = task.git?.worktreePath ?? task.git?.repo;
+  if (!worktreePath) return;
+
+  try {
+    const status = await getGitStatusPorcelain(worktreePath);
+    if (status.trim().length > 0) {
+      const changedFiles = status
+        .trim()
+        .split('\n')
+        .slice(0, 8)
+        .map((line) => line.trim())
+        .join(', ');
+      const message = `Git Discipline Gate: dirty worktree blocks task completion at ${worktreePath}. Commit, PR/stash, or revert first. Changes: ${changedFiles}`;
+      throw new ValidationError(message, [
+        {
+          code: GIT_DISCIPLINE_CODE,
+          message,
+          path: ['git', 'worktreePath'],
+        },
+      ]);
+    }
+  } catch (err) {
+    if (err instanceof ValidationError) {
+      throw err;
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    const message = `Git Discipline Gate: unable to verify git worktree before task completion at ${worktreePath}: ${detail}`;
+    throw new ValidationError(message, [
+      {
+        code: GIT_DISCIPLINE_CODE,
+        message,
+        path: ['git', 'worktreePath'],
+      },
+    ]);
+  }
 }
 
 // Default paths are resolved via the shared paths utility so Docker, tests,
@@ -857,8 +963,18 @@ export class TaskService {
 
       // Validate transition hooks (quality gates) before allowing status change
       if (statusChanged && input.status && settings) {
+        const completionPreviewTask = buildTaskWithMergedUpdates(
+          freshTask,
+          restInput,
+          gitUpdate,
+          githubUpdate,
+          blockedReasonUpdate
+        );
+
         // Check requireDeliverableForDone setting
         if (input.status === 'done') {
+          await assertCompletionDiscipline(completionPreviewTask);
+
           if (settings.tasks.requireDeliverableForDone) {
             const deliverables = input.deliverables ?? freshTask.deliverables ?? [];
             if (deliverables.length === 0) {

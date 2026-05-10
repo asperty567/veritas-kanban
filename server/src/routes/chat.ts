@@ -7,14 +7,14 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { getChatService } from '../services/chat-service.js';
-import { sendGatewayChat, loadGatewayToken } from '../services/gateway-chat-client.js';
-import { broadcastChatMessage, broadcastSquadMessage } from '../services/broadcast-service.js';
+import { sendGatewayRun, loadGatewayToken } from '../services/gateway-chat-client.js';
+import { broadcastSquadMessage } from '../services/broadcast-service.js';
 import { fireSquadWebhook } from '../services/squad-webhook-service.js';
 import { ConfigService } from '../services/config-service.js';
 import { getVeritasContextService } from '../services/veritas-context-service.js';
 import type { ChatSendInput } from '@veritas-kanban/shared';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { NotFoundError, ValidationError } from '../middleware/error-handler.js';
+import { NotFoundError } from '../middleware/error-handler.js';
 import { createLogger } from '../lib/logger.js';
 
 const log = createLogger('chat');
@@ -53,8 +53,8 @@ const squadMessageSchema = z.object({
  * POST /api/chat/send
  * Send a message to the chat interface
  *
- * Returns the user message echo immediately.
- * Agent response will stream via WebSocket (chat:message events).
+ * Returns the user message echo plus the Hermes run metadata immediately.
+ * HermesAgent owns execution through the HTTP /v1/runs control-plane API.
  */
 router.post(
   '/send',
@@ -113,16 +113,9 @@ router.post(
 
     log.info({ sessionId, messageId: userMessage.id, taskId: session.taskId }, 'Chat message sent');
 
-    // Return immediately - agent response will arrive async
-    res.status(200).json({
-      sessionId,
-      messageId: userMessage.id,
-      message: 'Message sent — agent response incoming',
-    });
-
-    // Trigger async AI response via the Hermes gateway
+    // Start an async Hermes API-server run. The live HermesAgent control-plane
+    // exposes HTTP /v1/runs, not the retired root WebSocket chat protocol.
     const gatewaySessionKey = `kanban-chat-${sessionId}`;
-
     const agent = input.agent || session.agent || 'veritas';
     const shouldInjectContext =
       input.includeContext !== false && agent.toLowerCase().includes('veritas');
@@ -138,57 +131,18 @@ router.post(
       }
     }
 
-    sendGatewayChat(gatewayMessage, gatewaySessionKey, {
-      onDelta: (text) => {
-        // Broadcast streaming chunk to kanban WebSocket clients
-        broadcastChatMessage(sessionId, {
-          type: 'chat:delta',
-          sessionId,
-          text,
-        });
-      },
-      onFinal: async (response) => {
-        try {
-          // Save the assistant response to the session
-          const assistantMessage = await chatService.addMessage(sessionId, {
-            role: 'assistant',
-            content: response.text,
-            agent: session.agent,
-          });
+    const run = await sendGatewayRun(
+      gatewayMessage,
+      gatewaySessionKey,
+      'You are HermesAgent responding to a Veritas Kanban chat message. Answer clearly and preserve Veritas board truth; do not mutate tasks unless explicitly requested.'
+    );
 
-          log.info({ sessionId, messageId: assistantMessage.id }, 'Assistant response saved');
-
-          // Broadcast final message to kanban WebSocket clients
-          broadcastChatMessage(sessionId, {
-            type: 'chat:message',
-            sessionId,
-            message: assistantMessage,
-          });
-        } catch (err: any) {
-          log.error({ err: err.message, sessionId }, 'Failed to save assistant response');
-        }
-      },
-      onError: async (error) => {
-        log.error({ error, sessionId }, 'Gateway chat error');
-
-        // Save error as system message
-        try {
-          await chatService.addMessage(sessionId, {
-            role: 'system',
-            content: `Error: ${error}`,
-          });
-
-          broadcastChatMessage(sessionId, {
-            type: 'chat:error',
-            sessionId,
-            error,
-          });
-        } catch (err: any) {
-          log.error({ err: err.message }, 'Failed to save error message');
-        }
-      },
-    }).catch((err) => {
-      log.error({ err: err.message, sessionId }, 'Gateway chat failed');
+    res.status(200).json({
+      sessionId,
+      messageId: userMessage.id,
+      runId: run.runId,
+      runStatus: run.status,
+      message: 'Message sent — Hermes run started',
     });
   })
 );

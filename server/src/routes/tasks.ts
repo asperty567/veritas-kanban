@@ -156,6 +156,17 @@ const subtaskSchema = z.object({
   criteriaChecked: z.array(z.boolean()).optional(),
 });
 
+const deliverableSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  type: z.enum(['document', 'code', 'report', 'artifact', 'other']),
+  path: z.string().optional(),
+  status: z.enum(['pending', 'attached', 'reviewed', 'accepted']),
+  agent: z.string().optional(),
+  created: z.string(),
+  description: z.string().optional(),
+});
+
 const githubSchema = z
   .object({
     issueNumber: z.number().int().positive(),
@@ -195,6 +206,7 @@ const updateTaskSchema = z.object({
   reviewScores: reviewScoresSchema.optional(),
   review: reviewStateSchema.optional(),
   subtasks: z.array(subtaskSchema).optional(),
+  deliverables: z.array(deliverableSchema).optional(),
   autoCompleteOnSubtasks: z.boolean().optional(),
   blockedBy: z.array(z.string()).optional(),
   blockedReason: blockedReasonSchema,

@@ -1,9 +1,9 @@
 /**
  * Gateway Chat Client
  *
- * Connects to the Hermes Gateway WebSocket to proxy chat messages.
+ * Starts Hermes API-server runs for Veritas chat messages.
  * Legacy Clawdbot/OpenClaw env names remain compatibility aliases only.
- * Handles authentication, message sending, and response collection.
+ * The legacy WebSocket client remains for old callers only.
  */
 
 import WebSocket from 'ws';

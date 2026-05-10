@@ -46,7 +46,29 @@ describe('TaskService router selector/claim', () => {
       priority: 'medium',
     });
 
-    await service.updateTask(done.id, { status: 'done' });
+    await service.updateTask(done.id, {
+      status: 'done',
+      reviewComments: [
+        {
+          id: 'review-router-claim-done',
+          file: 'server/src/__tests__/task-router-claim.test.ts',
+          line: 49,
+          content: 'Router selector fixture completed with required deliverable evidence.',
+          created: new Date().toISOString(),
+        },
+      ],
+      deliverables: [
+        {
+          id: 'deliverable-router-claim-done',
+          title: 'Router selector completion evidence',
+          type: 'report',
+          path: 'file:///tmp/veritas-router-claim/done-task.md',
+          status: 'attached',
+          created: new Date().toISOString(),
+          description: 'Test deliverable required by completion gate',
+        },
+      ],
+    });
     await service.updateTask(blocked.id, {
       status: 'blocked',
       blockedReason: { category: 'prerequisite', note: 'waiting on dependency' },
