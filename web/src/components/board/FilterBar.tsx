@@ -27,6 +27,34 @@ function normalizeAgentKey(agent: string): string {
   return agent.trim().toLowerCase();
 }
 
+const HERMES_AGENT_ROSTER = new Set([
+  'default',
+  'hawk',
+  'blitz',
+  'forge',
+  'midas',
+  'aura',
+  'orbit',
+  'signal',
+]);
+
+const HERMES_AGENT_LABELS: Record<string, string> = {
+  default: 'Hermes',
+  hawk: 'Hawk',
+  blitz: 'Blitz',
+  forge: 'Forge',
+  midas: 'Midas',
+  aura: 'Aura',
+  orbit: 'Orbit',
+  signal: 'Signal',
+};
+
+function isHermesAgentRosterAgent(agent: string | null | undefined): agent is string {
+  const trimmedValue = agent?.trim();
+  if (!trimmedValue) return false;
+  return HERMES_AGENT_ROSTER.has(normalizeAgentKey(trimmedValue));
+}
+
 interface AgentOption {
   value: string;
   label: string;
@@ -69,14 +97,21 @@ export function FilterBar({ tasks, filters, onFiltersChange }: FilterBarProps) {
   const { data: agentStatus } = useGlobalAgentStatus();
   const agents = new Map<string, AgentOption>();
   for (const agent of config?.agents || []) {
-    addAgentOption(agents, agent.type, agent.name);
+    if (agent.enabled && isHermesAgentRosterAgent(agent.type)) {
+      const key = normalizeAgentKey(agent.type);
+      addAgentOption(agents, agent.type, HERMES_AGENT_LABELS[key] || agent.name);
+    }
   }
   for (const activeAgent of agentStatus?.activeAgents || []) {
-    addAgentOption(agents, activeAgent.agent, activeAgent.agent);
+    if (isHermesAgentRosterAgent(activeAgent.agent)) {
+      const key = normalizeAgentKey(activeAgent.agent);
+      addAgentOption(agents, activeAgent.agent, HERMES_AGENT_LABELS[key] || activeAgent.agent);
+    }
   }
   for (const task of tasks) {
-    if (task.agent && task.agent !== 'auto') {
-      addAgentOption(agents, task.agent);
+    if (task.agent && task.agent !== 'auto' && isHermesAgentRosterAgent(task.agent)) {
+      const key = normalizeAgentKey(task.agent);
+      addAgentOption(agents, task.agent, HERMES_AGENT_LABELS[key]);
     }
   }
 
