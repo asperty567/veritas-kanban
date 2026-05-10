@@ -16,14 +16,16 @@ Use this playbook anytime an agent (human or LLM) takes a task from **todo** to 
 
 ## Lifecycle Overview
 
-| Stage       | Action                                                                                            | Required?   |
-| ----------- | ------------------------------------------------------------------------------------------------- | ----------- |
-| 0. Intake   | Task created with clear title, description, acceptance criteria, type, project, sprint.           | ✅          |
-| 1. Claim    | Agent sets status `in-progress`, starts timer, sets Agent Status → working.                       | ✅          |
-| 2. Work     | Agent executes subtasks; marks subtasks complete as it goes.                                      | ✅          |
-| 3. Update   | Post intermediate comment(s) or blockers; set status `blocked` if waiting on human.               | As needed   |
-| 4. Complete | Stop timer, set status `done`, provide completion summary + attachments, capture lessons learned. | ✅          |
-| 5. Review   | Trigger cross-model review if code touched or risk level ≥ medium.                                | ✅ for code |
+| Stage       | Action                                                                                                    | Required?   |
+| ----------- | --------------------------------------------------------------------------------------------------------- | ----------- |
+| 0. Intake   | Task created with clear title, description, acceptance criteria, type, project, sprint.                   | ✅          |
+| 1. Claim    | Agent sets status `in-progress`, starts timer, sets Agent Status → working.                               | ✅          |
+| 2. Work     | Agent executes subtasks; marks subtasks complete as it goes.                                              | ✅          |
+| 3. Update   | Post intermediate comment(s) or blockers; set status `blocked` if waiting on human.                       | As needed   |
+| 4. Complete | Stop timer, add completion summary + attachments, then pass the mandatory QA evidence gate before `done`. | ✅          |
+| 5. Review   | Trigger cross-model/independent review if code touched or risk level ≥ medium.                            | ✅ for code |
+
+For Veritas/HermesAgent cutover work, follow the mandatory Done checklist in [SOP: Veritas/HermesAgent Mandatory QA Evidence Gate](SOP-veritas-hermesagent-qa-evidence-gate.md). No task moves to `done` without explicit work, QA, review/PR/CI/runtime-smoke evidence where applicable, and repo-state evidence.
 
 ---
 

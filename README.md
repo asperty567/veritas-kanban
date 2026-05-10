@@ -64,6 +64,7 @@ Open [http://localhost:3000](http://localhost:3000) — that's it. The board aut
 - [Self-Hosting Guide](docs/guides/SELF_HOST.md) — production deployment, reverse proxy, auth hardening, Docker, and backups.
 - [Getting Started Guide](docs/GETTING-STARTED.md) — zero ➝ agent-ready in 5 minutes, plus sanity checks and prompt registry tips.
 - [Agent Task Workflow SOP](docs/SOP-agent-task-workflow.md) — lifecycle, API/CLI snippets, prompts.
+- [GitHub-backed Product/Spec Task Template](docs/templates/github-backed-product-spec-task.md) — reusable Veritas task shape for product/spec work with repo ownership, dependencies, acceptance criteria, chunk QA, and Done gate.
 - [Squad Chat Protocol](docs/SQUAD-CHAT-PROTOCOL.md) — agent messaging, system events (spawned/completed/failed), model attribution, and helper scripts.
 - [Sprint Planning SOP](docs/SOP-sprint-planning.md) — epic → sprint → task breakdown.
 - [Multi-Agent Orchestration](docs/SOP-multi-agent-orchestration.md) — PM + worker handoffs.
