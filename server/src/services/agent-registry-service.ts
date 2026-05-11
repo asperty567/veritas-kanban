@@ -212,6 +212,7 @@ const HERMES_AGENT_REF_ALIASES = new Map<string, string>([
   ['midas', 'midas'],
   ['orbit', 'orbit'],
   ['signal', 'signal'],
+  ['helm', 'helm'],
 ]);
 
 function normalizeHermesAgentRef(agentRef: string): string | null {
