@@ -97,7 +97,10 @@ function getSystemSignal(storage: boolean, disk: boolean, memory: boolean): Syst
 function getAgentSignal(): AgentSignal {
   try {
     const registry = getAgentRegistryService();
-    const agents = registry.list();
+    // Use the canonical Hermes runtime roster for dashboard health. The raw
+    // registry can keep stale/historical heartbeat rows, making the bar report
+    // all agents offline even when the runtime is healthy.
+    const agents = registry.runtimeList();
     const total = agents.length;
     const online = agents.filter(
       (a) => a.status === 'online' || a.status === 'busy' || a.status === 'idle'

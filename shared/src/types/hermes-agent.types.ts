@@ -11,6 +11,7 @@ export const HERMES_AGENT_ROSTER = [
   'orbit',
   'signal',
   'helm',
+  'scops',
 ] as const;
 
 export type HermesAgentId = (typeof HERMES_AGENT_ROSTER)[number];
@@ -25,6 +26,7 @@ export const HERMES_AGENT_DISPLAY_NAMES: Record<HermesAgentId, string> = {
   orbit: 'Orbit',
   signal: 'Signal',
   helm: 'Helm',
+  scops: 'SC Ops',
 };
 
 /** Runtime truth at the current cutover: these profiles are live/running. */

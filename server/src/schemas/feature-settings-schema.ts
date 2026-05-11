@@ -202,15 +202,13 @@ const DocFreshnessSettingsSchema = z
 const SquadWebhookSettingsSchema = z
   .object({
     enabled: z.boolean().optional(),
-    mode: z.enum(['webhook', 'hermes', 'openclaw']).optional(),
+    mode: z.enum(['webhook', 'hermes']).optional(),
     // Generic webhook fields
     url: z.string().url().max(500).optional(),
     secret: z.string().min(16).max(128).optional(),
-    // Hermes gateway fields; openclaw* names remain accepted as legacy compatibility aliases.
+    // HermesAgent API-server fields.
     hermesGatewayUrl: z.string().url().max(500).optional(),
     hermesGatewayToken: z.string().min(16).max(128).optional(),
-    openclawGatewayUrl: z.string().url().max(500).optional(),
-    openclawGatewayToken: z.string().min(16).max(128).optional(),
     // Common fields
     notifyOnHuman: z.boolean().optional(),
     notifyOnAgent: z.boolean().optional(),

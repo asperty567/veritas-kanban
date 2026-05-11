@@ -625,6 +625,34 @@ describe('AgentRegistryService', () => {
       vi.useRealTimers();
     });
 
+    it('should clear terminal task linkage without reviving an offline profile gateway', () => {
+      const service = getAgentRegistryService();
+      service.register({ id: 'midas', name: 'Midas', capabilities: [{ name: 'revenue' }] });
+      service.heartbeat('midas', {
+        status: 'offline',
+        currentTaskId: 'task_20260228_syncA',
+        currentTaskTitle: 'Revenue lane',
+      });
+
+      const changed = service.reconcileFromTasks(
+        [
+          {
+            id: 'task_20260228_syncA',
+            title: 'Revenue lane',
+            status: 'done',
+            agent: 'midas',
+          },
+        ],
+        TASK_RECONCILE_CONTEXT
+      );
+
+      const agent = service.get('midas');
+      expect(changed).toBe(1);
+      expect(agent?.status).toBe('offline');
+      expect(agent?.currentTaskId).toBeUndefined();
+      expect(agent?.currentTaskTitle).toBeUndefined();
+    });
+
     it('should reject unauthorized reconcile context', () => {
       const service = getAgentRegistryService();
       service.register({ id: 'coder-1', name: 'Coder 1', capabilities: [{ name: 'code' }] });
@@ -667,6 +695,7 @@ describe('AgentRegistryService', () => {
         'midas',
         'orbit',
         'signal',
+        'helm',
       ]);
       expect(agents.find((agent) => agent.id === 'ops')).toBeUndefined();
       expect(agents.find((agent) => agent.id === 'default')?.status).toBe('online');
@@ -682,9 +711,9 @@ describe('AgentRegistryService', () => {
 
       const stats = service.runtimeStats();
 
-      expect(stats.total).toBe(8);
+      expect(stats.total).toBe(9);
       expect(stats.online).toBe(3);
-      expect(stats.offline).toBe(5);
+      expect(stats.offline).toBe(6);
       expect(stats.capabilities).not.toContain('legacy');
     });
   });

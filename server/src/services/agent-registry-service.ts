@@ -55,7 +55,7 @@ export interface RegisteredAgent {
   currentTaskId?: string;
   /** Current task title */
   currentTaskTitle?: string;
-  /** Session key (for OpenClaw/orchestrator integration) */
+  /** Runtime session key (HermesAgent / Veritas workflow integration) */
   sessionKey?: string;
 }
 
@@ -213,6 +213,10 @@ const HERMES_AGENT_REF_ALIASES = new Map<string, string>([
   ['orbit', 'orbit'],
   ['signal', 'signal'],
   ['helm', 'helm'],
+  ['scops', 'scops'],
+  ['sc ops', 'scops'],
+  ['sc-ops', 'scops'],
+  ['SC Ops', 'scops'],
 ]);
 
 function normalizeHermesAgentRef(agentRef: string): string | null {
@@ -343,7 +347,10 @@ class AgentRegistryService {
         return agent;
       }
 
-      agent.status = 'idle';
+      // Preserve a known-offline profile gateway as offline while clearing the stale task
+      // linkage. A terminal task should not make an off-shift gateway look idle/online,
+      // but it also must not keep showing a completed task as current work.
+      agent.status = previousStatus === 'offline' ? 'offline' : 'idle';
       agent.currentTaskId = undefined;
       agent.currentTaskTitle = undefined;
     }
@@ -418,7 +425,7 @@ class AgentRegistryService {
         continue;
       }
 
-      if (agent.status === 'busy' && agent.currentTaskId) {
+      if (agent.currentTaskId) {
         const task = tasks.find((t) => t.id === agent.currentTaskId);
         if (task && task.status !== 'in-progress') {
           const prevStatus = agent.status;

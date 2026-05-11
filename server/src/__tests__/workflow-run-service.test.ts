@@ -67,6 +67,9 @@ describe('WorkflowRunService', () => {
     mockExecuteStep.mockImplementation(async (step: any) => ({
       output: { done: step.id },
       outputPath: `/tmp/${step.id}.json`,
+      sessionKey: `session-${step.id}`,
+      runId: `runtime-${step.id}`,
+      status: 'queued',
     }));
     const mod = await import('../services/workflow-run-service.js');
     service = new mod.WorkflowRunService(tmpDir);
@@ -87,6 +90,13 @@ describe('WorkflowRunService', () => {
       const saved = await service.getRun(run.id);
       expect(saved.status).toBe('completed');
       expect(saved.steps.every((s: any) => s.status === 'completed')).toBe(true);
+      expect(saved.steps[0].sessionKey).toBe('session-step-1');
+      expect(saved.context._runtimeRuns['step-1']).toMatchObject({
+        provider: 'hermes-agent',
+        runId: 'runtime-step-1',
+        sessionKey: 'session-step-1',
+        status: 'queued',
+      });
     });
 
     const snapshot = await fs.readFile(path.join(tmpDir, run.id, 'workflow.yml'), 'utf8');

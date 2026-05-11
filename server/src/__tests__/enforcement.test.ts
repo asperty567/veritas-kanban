@@ -268,18 +268,17 @@ describe('Enforcement gates', () => {
     );
   });
 
-  it('blocks task completion when legacy gateway runtime env would override HermesAgent', async () => {
+  it('ignores legacy gateway env aliases so they cannot become runtime authority', async () => {
     vi.spyOn(ConfigService.prototype, 'getFeatureSettings').mockResolvedValue(
       buildSettings({ enforcement: { reviewGate: false, closingComments: false } }) as any
     );
     process.env.CLAWDBOT_GATEWAY = 'http://127.0.0.1:9';
     service = new TaskService({ tasksDir, archiveDir });
 
-    const task = await service.createTask({ title: 'Legacy runtime contamination' });
+    const task = await service.createTask({ title: 'Legacy runtime alias ignored' });
+    const updated = await service.updateTask(task.id, { status: 'done' });
 
-    await expect(service.updateTask(task.id, { status: 'done' })).rejects.toThrow(
-      /Runtime Discipline Gate.*CLAWDBOT_GATEWAY.*127\.0\.0\.1:9/
-    );
+    expect(updated.status).toBe('done');
   });
 
   it('validates reviewScores length and range', () => {

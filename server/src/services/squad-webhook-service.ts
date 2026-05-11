@@ -52,62 +52,59 @@ export async function fireSquadWebhook(
     return;
   }
 
-  // Route based on mode
-  if (settings.mode === 'hermes' || settings.mode === 'openclaw') {
+  // Route based on mode. Legacy/non-schema modes are intentionally fail-closed.
+  if (settings.mode === 'hermes') {
     await fireHermesGatewayWake(message, settings);
-  } else {
+  } else if (settings.mode === 'webhook' || !settings.mode) {
     await fireGenericWebhook(message, settings, isHuman);
+  } else {
+    log.warn({ mode: settings.mode }, 'Squad webhook mode disabled by Hermes cutover');
   }
 }
 
 /**
- * Fire a Hermes gateway wake call. The openclaw* settings names are retained
- * only as legacy compatibility aliases while stored settings migrate.
+ * Fire a HermesAgent run wake call.
  */
 async function fireHermesGatewayWake(
   message: SquadMessage,
   settings: SquadWebhookSettings
 ): Promise<void> {
-  const gatewayUrl = settings.hermesGatewayUrl || settings.openclawGatewayUrl;
-  const gatewayToken = settings.hermesGatewayToken || settings.openclawGatewayToken;
+  const gatewayUrl = settings.hermesGatewayUrl;
+  const gatewayToken = settings.hermesGatewayToken;
 
   if (!gatewayUrl || !gatewayToken) {
-    log.warn('Hermes gateway mode enabled but gatewayUrl or gatewayToken missing');
+    log.warn('Hermes gateway mode enabled but hermesGatewayUrl or hermesGatewayToken missing');
     return;
   }
 
   const displayName = message.displayName || message.agent;
   const wakeText = `🗨️ Squad chat from ${displayName}: ${message.message}`;
+  const url = `${gatewayUrl.replace(/\/+$/, '')}/v1/runs`;
 
-  const payload = {
-    tool: 'cron',
-    args: {
-      action: 'wake',
-      text: wakeText,
-      mode: 'now',
-    },
-  };
-
-  const url = `${gatewayUrl}/tools/invoke`;
-
-  // Validate URL to prevent SSRF attacks
   const validation = validateWebhookUrl(url);
   if (!validation.valid) {
-    log.warn({ url, reason: validation.reason }, 'Webhook URL blocked (SSRF prevention)');
+    log.warn({ url, reason: validation.reason }, 'HermesAgent URL blocked (SSRF prevention)');
     return;
   }
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const sessionKey = `veritas:squad:${message.id}`;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${gatewayToken}`,
+        'X-Hermes-Session-Key': sessionKey,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        input: wakeText,
+        session_id: sessionKey,
+        instructions:
+          'You are handling a Veritas squad-chat wake. Veritas is task truth; HermesAgent is runtime. Do not call non-Hermes runtime endpoints.',
+      }),
       signal: controller.signal,
     });
 
@@ -116,17 +113,17 @@ async function fireHermesGatewayWake(
     if (!response.ok) {
       log.warn(
         { status: response.status, statusText: response.statusText, url },
-        'Hermes gateway wake call returned non-2xx status'
+        'HermesAgent run wake returned non-2xx status'
       );
       return;
     }
 
-    log.info({ messageId: message.id, displayName }, 'Hermes gateway wake call fired successfully');
+    log.info({ messageId: message.id, displayName }, 'HermesAgent run wake fired successfully');
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      log.warn({ url }, 'Hermes gateway wake call timed out after 5 seconds');
+      log.warn({ url }, 'HermesAgent run wake timed out after 5 seconds');
     } else {
-      log.error({ err: err.message, url }, 'Hermes gateway wake call failed');
+      log.error({ err: err.message, url }, 'HermesAgent run wake failed');
     }
   }
 }
@@ -140,6 +137,15 @@ async function fireGenericWebhook(
   isHuman: boolean
 ): Promise<void> {
   if (!settings.url) {
+    return;
+  }
+
+  const validation = validateWebhookUrl(settings.url);
+  if (!validation.valid) {
+    log.warn(
+      { url: settings.url, reason: validation.reason },
+      'Squad webhook URL blocked (SSRF prevention)'
+    );
     return;
   }
 

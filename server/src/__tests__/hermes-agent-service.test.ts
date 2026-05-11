@@ -69,7 +69,7 @@ vi.mock('../lib/logger.js', () => ({
   }),
 }));
 
-import { HermesAgentService } from '../services/clawdbot-agent-service.js';
+import { HermesAgentService } from '../services/hermes-agent-service.js';
 
 function makeTask(id: string) {
   return {
@@ -93,7 +93,6 @@ function makeTask(id: string) {
 describe('HermesAgentService Start Agent connector', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.HERMES_DISABLE_REQUEST_FILE_FALLBACK;
     mocks.getTask.mockImplementation(async (id: string) => makeTask(id));
     mocks.resolveAgent.mockResolvedValue({
       agent: 'claude-code',
@@ -144,31 +143,26 @@ describe('HermesAgentService Start Agent connector', () => {
     );
   });
 
-  it('falls back to the existing request-file connector when Hermes API is unavailable', async () => {
+  it('fails closed instead of creating a request-file queue when Hermes API is unavailable', async () => {
     mocks.sendGatewayRun.mockRejectedValue(new Error('Hermes gateway unavailable'));
     const service = new HermesAgentService();
 
-    const result = await service.startAgent('TASK-FALLBACK', 'claude-code');
+    await expect(service.startAgent('TASK-NO-FALLBACK', 'claude-code')).rejects.toThrow(
+      /Failed to start agent via Hermes: Hermes gateway unavailable/
+    );
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        taskId: 'TASK-FALLBACK',
-        agent: 'claude-code',
-        backend: 'request-file',
-        requestFile: expect.stringContaining('.veritas-kanban/agent-requests/TASK-FALLBACK.json'),
-      })
+    expect(mocks.writeFile).not.toHaveBeenCalledWith(
+      expect.stringContaining('.veritas-kanban/agent-requests/TASK-NO-FALLBACK.json'),
+      expect.anything()
     );
-    const requestWrite = mocks.writeFile.mock.calls.find(([file]) =>
-      String(file).endsWith('.veritas-kanban/agent-requests/TASK-FALLBACK.json')
-    );
-    expect(requestWrite).toBeTruthy();
-    const requestPayload = JSON.parse(requestWrite?.[1] as string);
-    expect(requestPayload).toEqual(
+    expect(mocks.updateTask).toHaveBeenLastCalledWith(
+      'TASK-NO-FALLBACK',
       expect.objectContaining({
-        taskId: 'TASK-FALLBACK',
-        attemptId: result.attemptId,
-        sessionKey: result.sessionKey,
-        backend: 'hermes-api-fallback',
+        status: 'todo',
+        attempt: expect.objectContaining({ status: 'failed' }),
+        automation: expect.objectContaining({
+          result: 'Failed to start Hermes run: Hermes gateway unavailable',
+        }),
       })
     );
   });

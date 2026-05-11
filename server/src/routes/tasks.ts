@@ -156,6 +156,13 @@ const subtaskSchema = z.object({
   criteriaChecked: z.array(z.boolean()).optional(),
 });
 
+const verificationStepSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  checked: z.boolean(),
+  checkedAt: z.string().optional(),
+});
+
 const deliverableSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -206,6 +213,7 @@ const updateTaskSchema = z.object({
   reviewScores: reviewScoresSchema.optional(),
   review: reviewStateSchema.optional(),
   subtasks: z.array(subtaskSchema).optional(),
+  verificationSteps: z.array(verificationStepSchema).optional(),
   deliverables: z.array(deliverableSchema).optional(),
   autoCompleteOnSubtasks: z.boolean().optional(),
   blockedBy: z.array(z.string()).optional(),

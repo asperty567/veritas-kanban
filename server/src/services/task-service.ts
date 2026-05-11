@@ -39,10 +39,7 @@ const log = createLogger('task-cache');
 const TASK_SYNC_CONTEXT: TaskSyncContext = createTaskSyncToken('task-service');
 const TASK_RECONCILE_CONTEXT: TaskSyncContext = createTaskSyncToken('task-reconciler');
 const execFileAsync = promisify(execFileCallback);
-const LEGACY_RUNTIME_ENV_KEYS = ['CLAWDBOT_GATEWAY'] as const;
-const DEAD_RUNTIME_TARGETS = ['127.0.0.1:9', 'localhost:9'] as const;
 const GIT_DISCIPLINE_CODE = 'GIT_DISCIPLINE_GATE';
-const RUNTIME_DISCIPLINE_CODE = 'RUNTIME_DISCIPLINE_GATE';
 
 /**
  * Task ID format validation
@@ -68,23 +65,6 @@ function makeSlug(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 50);
-}
-
-function redactRuntimeValue(value: string): string {
-  return value.replace(/[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+/g, (token) => {
-    if (DEAD_RUNTIME_TARGETS.some((target) => token.includes(target))) {
-      return token;
-    }
-    if (token.startsWith('http://') || token.startsWith('https://')) {
-      try {
-        const url = new URL(token);
-        return `${url.protocol}//${url.host}`;
-      } catch {
-        return '[REDACTED]';
-      }
-    }
-    return token.length > 32 ? '[REDACTED]' : token;
-  });
 }
 
 function buildTaskWithMergedUpdates(
@@ -114,24 +94,6 @@ async function getGitStatusPorcelain(worktreePath: string): Promise<string> {
 }
 
 async function assertCompletionDiscipline(task: Task): Promise<void> {
-  for (const key of LEGACY_RUNTIME_ENV_KEYS) {
-    const value = process.env[key];
-    if (!value) continue;
-
-    const displayValue = redactRuntimeValue(value);
-    const deadTarget = DEAD_RUNTIME_TARGETS.find((target) => value.includes(target));
-    const message = deadTarget
-      ? `Runtime Discipline Gate: legacy runtime env ${key} points at retired/dead target ${displayValue}`
-      : `Runtime Discipline Gate: legacy runtime env ${key} is set (${displayValue}); use HERMES_API_SERVER_URL instead`;
-    throw new ValidationError(message, [
-      {
-        code: RUNTIME_DISCIPLINE_CODE,
-        message,
-        path: ['status'],
-      },
-    ]);
-  }
-
   const worktreePath = task.git?.worktreePath ?? task.git?.repo;
   if (!worktreePath) return;
 

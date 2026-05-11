@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../config/security.js', () => ({
   getSecurityConfig: vi.fn(() => ({
-    authEnabled: false,
+    authEnabled: true,
     passwordHash: null,
     jwtSecret: 'test-secret-key',
   })),

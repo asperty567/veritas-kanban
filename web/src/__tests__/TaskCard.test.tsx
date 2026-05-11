@@ -305,6 +305,30 @@ describe('TaskCard', () => {
     expect(screen.getByText('5m')).toBeDefined();
   });
 
+  it('adds active running entry elapsed time to the clock badge', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-11T10:01:30Z'));
+    try {
+      const task = createMockTask({
+        timeTracking: {
+          entries: [
+            {
+              id: 'timer-1',
+              startTime: '2026-05-11T10:00:00Z',
+            },
+          ],
+          totalSeconds: 0,
+          isRunning: true,
+          activeEntryId: 'timer-1',
+        },
+      });
+      renderCard(task);
+      expect(screen.getByText('1m')).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows attachment count', () => {
     const task = createMockTask({
       attachments: [

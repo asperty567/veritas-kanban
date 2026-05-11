@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
-import { HermesAgentService, hermesAgentService } from '../services/clawdbot-agent-service.js';
+import { HermesAgentService, hermesAgentService } from '../services/hermes-agent-service.js';
 import { getTelemetryService } from '../services/telemetry-service.js';
 import { getTaskService } from '../services/task-service.js';
 import type { AgentType, TokenTelemetryEvent } from '@veritas-kanban/shared';
@@ -95,12 +95,18 @@ router.get(
   })
 );
 
-// GET /api/agents/pending - List pending agent requests (for Veritas to poll)
+// GET /api/agents/pending - retired local request-file queue
 router.get(
   '/pending',
   asyncHandler(async (_req, res) => {
-    const requests = await hermesAgentService.listPendingRequests();
-    res.json(requests);
+    res.status(410).json({
+      ok: false,
+      retired: true,
+      sourceOfTruth: 'veritas-runnable-claim',
+      controlPlane: 'hermes-agent',
+      error:
+        'Request-file agent polling is retired. Use Veritas runnable/claim APIs plus HermesAgent /v1/runs runtime state.',
+    });
   })
 );
 

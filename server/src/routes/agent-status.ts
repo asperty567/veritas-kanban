@@ -226,7 +226,7 @@ function registryStatusToAgentStatus(status: RegisteredAgent['status']): AgentSt
  * `/api/agent/status` predates the agent registry and is kept as a compatibility
  * alias for existing clients. Prefer registry data when the legacy status payload
  * has no activeAgents so HermesAgent/Hermes-native registrations remain visible
- * without requiring OpenClaw-era callers to POST global status separately.
+ * without requiring legacy callers to POST global status separately.
  */
 function getRegistryActiveAgents(): ActiveAgent[] {
   try {

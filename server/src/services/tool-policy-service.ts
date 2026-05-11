@@ -340,8 +340,8 @@ export class ToolPolicyService {
   }
 
   /**
-   * Get the OpenClaw tool filter configuration for a role
-   * Returns the allowed/denied tool names that can be passed to OpenClaw sessions API
+   * Get the HermesAgent tool filter configuration for a role
+   * Returns the allowed/denied tool names that can be passed to HermesAgent runtime policy
    *
    * @param role - The agent role to get the tool filter for
    * @returns Object with optional `allowed` and `denied` arrays. Empty object if no restrictions.

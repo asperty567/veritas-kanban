@@ -1,6 +1,6 @@
 /**
  * WorkflowStepExecutor — Executes individual workflow steps
- * Phase 1: Core Engine (agent steps only, OpenClaw integration placeholder)
+ * Phase 1: Core Engine (agent steps dispatch HermesAgent runs)
  */
 
 import fs from 'fs/promises';
@@ -17,6 +17,7 @@ import type {
 import { getWorkflowRunsDir } from '../utils/paths.js';
 import { createLogger } from '../lib/logger.js';
 import { getToolPolicyService } from './tool-policy-service.js';
+import { sendGatewayRun } from './gateway-chat-client.js';
 
 const log = createLogger('workflow-step-executor');
 
@@ -49,8 +50,11 @@ export class WorkflowStepExecutor {
   }
 
   /**
-   * Execute an agent step (spawns OpenClaw session)
-   * Integrated features: #108 (progress), #110 (tool policies), #111 (session management)
+   * Execute an agent step by starting a HermesAgent run and recording the run handle.
+   *
+   * Veritas remains the workflow authority: a successful spawn marks this workflow
+   * step as dispatched/observable, not as customer-deliverable task completion.
+   * Downstream task completion still requires explicit evidence/verification writes.
    */
   private async executeAgentStep(
     step: WorkflowStep,
@@ -61,20 +65,36 @@ export class WorkflowStepExecutor {
       | { config?: { fresh_session_default?: boolean } }
       | undefined;
 
-    // Build session configuration (#111)
     const sessionConfig = this.buildSessionConfig(step, run, workflowConfig?.config);
-
-    // Load progress file (#108)
     const progress = await this.loadProgressFile(run.id);
-
-    // Build context based on session config (#111)
     const sessionContext = this.buildSessionContext(sessionConfig, run, progress);
-
-    // Render the input prompt with context
     const prompt = this.renderTemplate(step.input || '', sessionContext);
-
-    // Get tool policy filter for this agent role (#110)
     const toolPolicyFilter = await this.getToolPolicyForAgent(agentDef);
+
+    const sessions = this.getSessionMap(run);
+    const existingSessionKey = step.agent ? sessions[step.agent] : undefined;
+    const sessionKey =
+      sessionConfig.mode === 'reuse' && existingSessionKey
+        ? existingSessionKey
+        : this.buildHermesSessionKey(run, step);
+
+    const instructions = [
+      `Workflow: ${run.workflowId} v${run.workflowVersion}`,
+      `Workflow run: ${run.id}`,
+      run.taskId ? `Task: ${run.taskId}` : undefined,
+      `Step: ${step.id} — ${step.name}`,
+      step.agent ? `Agent: ${step.agent}` : undefined,
+      agentDef?.role ? `Role: ${agentDef.role}` : undefined,
+      agentDef?.model ? `Model: ${agentDef.model}` : undefined,
+      `Session mode: ${sessionConfig.mode}`,
+      `Timeout: ${sessionConfig.timeout}s`,
+      `Allowed tools: ${toolPolicyFilter.allowed?.join(', ') || 'all'}`,
+      `Denied tools: ${toolPolicyFilter.denied?.join(', ') || 'none'}`,
+      '',
+      'Write completion evidence back to Veritas; do not treat run spawn as task completion.',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     log.info(
       {
@@ -82,73 +102,68 @@ export class WorkflowStepExecutor {
         stepId: step.id,
         agent: step.agent,
         role: agentDef?.role,
+        sessionKey,
         sessionMode: sessionConfig.mode,
         sessionContext: sessionConfig.context,
         sessionCleanup: sessionConfig.cleanup,
         toolPolicy: toolPolicyFilter,
       },
-      'Agent step execution configured'
+      'Starting HermesAgent workflow step run'
     );
 
-    // TODO: OpenClaw integration (sessions_spawn)
-    // This is the placeholder for actual session spawning.
-    // When OpenClaw sessions API is integrated, replace this with:
-    //
-    // if (sessionConfig.mode === 'reuse') {
-    //   const lastSessionKey = run.context._sessions?.[step.agent!];
-    //   if (lastSessionKey) {
-    //     // Continue existing session
-    //     const result = await this.continueSession(lastSessionKey, prompt);
-    //   } else {
-    //     // No existing session, fall back to fresh
-    //     const sessionKey = await this.spawnAgent({
-    //       agentId: step.agent!,
-    //       prompt,
-    //       taskId: run.taskId,
-    //       model: agentDef?.model,
-    //       toolFilter: toolPolicyFilter,
-    //       timeout: sessionConfig.timeout,
-    //     });
-    //     run.context._sessions = { ...run.context._sessions, [step.agent!]: sessionKey };
-    //   }
-    // } else {
-    //   // Fresh session
-    //   const sessionKey = await this.spawnAgent({
-    //     agentId: step.agent!,
-    //     prompt,
-    //     taskId: run.taskId,
-    //     model: agentDef?.model,
-    //     toolFilter: toolPolicyFilter,
-    //     timeout: sessionConfig.timeout,
-    //   });
-    //   run.context._sessions = { ...run.context._sessions, [step.agent!]: sessionKey };
-    // }
-    // const result = await this.waitForSession(sessionKey);
-    //
-    // After session completes:
-    // if (sessionConfig.cleanup === 'delete') {
-    //   await this.cleanupSession(sessionKey);
-    // }
+    const gatewayRun = await sendGatewayRun(prompt, sessionKey, instructions);
 
-    // Placeholder: Simulate agent execution (Phase 1 only)
-    const result = `Agent ${step.agent} (role: ${agentDef?.role || 'unknown'}) executed step ${step.id}\n\nSession Config:\n- Mode: ${sessionConfig.mode}\n- Context: ${sessionConfig.context}\n- Cleanup: ${sessionConfig.cleanup}\n- Timeout: ${sessionConfig.timeout}s\n\nTool Policy:\n- Allowed: ${toolPolicyFilter.allowed?.join(', ') || 'all'}\n- Denied: ${toolPolicyFilter.denied?.join(', ') || 'none'}\n\nPrompt:\n${prompt}\n\nSTATUS: done\nOUTPUT: Placeholder result`;
+    if (step.agent) {
+      sessions[step.agent] = sessionKey;
+      run.context._sessions = sessions;
+    }
 
-    // Parse output
+    const result = [
+      `HermesAgent run started for workflow step ${step.id}`,
+      '',
+      `Workflow Run: ${run.id}`,
+      `Hermes Run: ${gatewayRun.runId}`,
+      `Hermes Status: ${gatewayRun.status}`,
+      `Session Key: ${sessionKey}`,
+      `Agent: ${step.agent || 'unassigned'}`,
+      `Role: ${agentDef?.role || 'unknown'}`,
+      '',
+      'STATUS: done',
+      `OUTPUT: HermesAgent run ${gatewayRun.runId} started and recorded by Veritas`,
+    ].join('\n');
+
     const parsed = this.parseStepOutput(result, step);
-
-    // Validate acceptance criteria
     await this.validateAcceptanceCriteria(step, result, parsed);
 
-    // Write output to step-outputs/
     const outputPath = await this.saveStepOutput(run.id, step.id, result);
-
-    // Append to progress file (#108)
     await this.appendProgressFile(run.id, step.id, result);
+
+    if (sessionConfig.cleanup === 'delete') {
+      await this.cleanupSession(sessionKey);
+    }
 
     return {
       output: parsed,
       outputPath,
+      sessionKey,
+      runId: gatewayRun.runId,
+      status: gatewayRun.status,
     };
+  }
+
+  private getSessionMap(run: WorkflowRun): Record<string, string> {
+    const existing = run.context._sessions;
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+      return { ...(existing as Record<string, string>) };
+    }
+    return {};
+  }
+
+  private buildHermesSessionKey(run: WorkflowRun, step: WorkflowStep): string {
+    const segments = ['veritas-workflow', run.id, step.id, step.agent || 'agent'].map((segment) =>
+      sanitizeFilename(String(segment)).replace(/[^a-zA-Z0-9_.-]/g, '-')
+    );
+    return segments.filter(Boolean).join(':').slice(0, 180);
   }
 
   /**
@@ -624,8 +639,7 @@ export class WorkflowStepExecutor {
     );
 
     // Execute all sub-steps in parallel using Promise.allSettled
-    // Note: For production use with real OpenClaw sessions, consider batching to limit
-    // concurrent session spawns (e.g., p-limit library with concurrency: 10)
+    // HermesAgent owns runtime; callers can add batching if concurrency needs limiting.
     const subStepPromises = subSteps.map((subStep) =>
       this.executeParallelSubStep(subStep, run, contextWithProgress, step.id)
     );
@@ -778,12 +792,10 @@ export class WorkflowStepExecutor {
   }
 
   /**
-   * Cleanup OpenClaw session (Phase 2 tracked in #110)
+   * Cleanup HermesAgent session metadata (runtime lifecycle is owned by HermesAgent)
    */
   async cleanupSession(sessionKey: string): Promise<void> {
-    log.info({ sessionKey }, 'Session cleanup (placeholder)');
-    // Phase 2 (tracked in #110): Call OpenClaw session cleanup API
-    // Will integrate with sessions API for proper resource cleanup
+    log.info({ sessionKey }, 'HermesAgent session cleanup noted');
   }
 
   // ==================== Phase 2: Progress File Integration (#108) ====================
@@ -1011,7 +1023,7 @@ export class WorkflowStepExecutor {
 
   /**
    * Get tool policy filter for an agent role (#110)
-   * Returns tool restrictions to pass to OpenClaw session spawn
+   * Returns tool restrictions to pass to HermesAgent runs
    */
   private async getToolPolicyForAgent(agentDef: WorkflowAgent | null): Promise<{
     allowed?: string[];

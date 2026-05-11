@@ -8,7 +8,6 @@
  * 4. On completion, Veritas calls back to update the task
  *
  * This keeps agent management simple and leverages Hermes infrastructure.
- * Legacy Clawdbot export names remain compatibility aliases only.
  */
 
 import { EventEmitter } from 'events';
@@ -23,7 +22,7 @@ import { getBreaker } from './circuit-registry.js';
 import { validatePathSegment, ensureWithinBase } from '../utils/sanitize.js';
 import type { Task, AgentType, TaskAttempt, AttemptStatus } from '@veritas-kanban/shared';
 import { createLogger } from '../lib/logger.js';
-const log = createLogger('clawdbot-agent-service');
+const log = createLogger('hermes-agent-service');
 
 const PROJECT_ROOT = path.resolve(process.cwd(), '..');
 const LOGS_DIR = path.join(PROJECT_ROOT, '.veritas-kanban', 'logs');
@@ -31,7 +30,6 @@ const HERMES_GATEWAY =
   process.env.HERMES_API_SERVER_URL ||
   process.env.HERMES_GATEWAY ||
   process.env.HERMES_GATEWAY_URL ||
-  process.env.CLAWDBOT_GATEWAY ||
   'http://127.0.0.1:8642';
 void HERMES_GATEWAY;
 const RUNTIME_MONITOR_INTERVAL_MS = Number(
@@ -57,20 +55,18 @@ export interface AgentStatus {
   status: AttemptStatus;
   startedAt?: string;
   endedAt?: string;
-  backend?: 'hermes-api' | 'request-file';
+  backend?: 'hermes-api';
   runId?: string;
   sessionKey?: string;
-  requestFile?: string;
   lastRuntimeStatus?: string;
   monitorChecks?: number;
   escalationReason?: string;
 }
 
 interface HermesDispatchResult {
-  backend: 'hermes-api' | 'request-file';
+  backend: 'hermes-api';
   runId?: string;
   sessionKey: string;
-  requestFile?: string;
 }
 
 export interface AgentOutput {
@@ -87,7 +83,7 @@ const pendingAgents = new Map<
     attemptId: string;
     agent: AgentType;
     startedAt: string;
-    backend?: 'hermes-api' | 'request-file';
+    backend?: 'hermes-api';
     runId?: string;
     sessionKey?: string;
     lastRuntimeStatus?: string;
@@ -209,9 +205,8 @@ export class HermesAgentService {
       },
     });
 
-    // Start a real Hermes API-server run (wrapped in circuit breaker). If the
-    // Hermes API is unavailable, preserve the legacy file-backed connector as a
-    // compatibility fallback so existing Veritas pollers keep working.
+    // Start a real Hermes API-server run (wrapped in circuit breaker). Fail closed
+    // if HermesAgent is unavailable: Veritas must not create a second local queue.
     const agentBreaker = getBreaker('agent');
     let dispatch: HermesDispatchResult;
     try {
@@ -229,9 +224,7 @@ export class HermesAgentService {
           ...(task.automation || {}),
           sessionKey: dispatch.sessionKey,
           spawnedAt: startedAt,
-          result: dispatch.runId
-            ? `Hermes API run started: ${dispatch.runId}`
-            : `Hermes request queued: ${dispatch.requestFile}`,
+          result: `Hermes API run started: ${dispatch.runId}`,
         },
       });
       if (dispatch.backend === 'hermes-api' && dispatch.runId) {
@@ -263,7 +256,6 @@ export class HermesAgentService {
       backend: dispatch.backend,
       runId: dispatch.runId,
       sessionKey: dispatch.sessionKey,
-      requestFile: dispatch.requestFile,
       monitorChecks: 0,
     };
   }
@@ -399,9 +391,8 @@ export class HermesAgentService {
   }
 
   /**
-   * Send task request to Hermes. Prefer Hermes' API-server /v1/runs endpoint so
-   * Start Agent actually starts work immediately; keep the file-backed request
-   * queue only as a compatibility fallback for older Veritas/Hermes bridges.
+   * Send task request to HermesAgent API-server /v1/runs. There is no local
+   * request-file fallback: Veritas runnable/claim APIs are the only queue.
    */
   private async sendToHermes(
     prompt: string,
@@ -413,56 +404,16 @@ export class HermesAgentService {
     validatePathSegment(taskId);
     validatePathSegment(attemptId);
 
-    try {
-      const run = await sendGatewayRun(
-        prompt,
-        sessionKey,
-        'You are HermesAgent executing a Veritas kanban task. Follow the task prompt exactly and keep Veritas board truth updated through its API.'
-      );
-      log.info({ taskId, attemptId, runId: run.runId }, '[HermesAgent] Started Hermes API run');
-      return {
-        backend: 'hermes-api',
-        runId: run.runId,
-        sessionKey,
-      };
-    } catch (error: any) {
-      if (process.env.HERMES_DISABLE_REQUEST_FILE_FALLBACK === 'true') {
-        throw error;
-      }
-      log.warn(
-        { err: error.message, taskId, attemptId },
-        '[HermesAgent] Hermes API run failed; falling back to request-file connector'
-      );
-    }
-
-    const requestsDir = path.join(PROJECT_ROOT, '.veritas-kanban', 'agent-requests');
-    const requestFile = path.join(requestsDir, `${taskId}.json`);
-    ensureWithinBase(requestsDir, requestFile);
-
-    await fs.mkdir(path.dirname(requestFile), { recursive: true });
-
-    await fs.writeFile(
-      requestFile,
-      JSON.stringify(
-        {
-          taskId,
-          attemptId,
-          sessionKey,
-          prompt,
-          requestedAt: new Date().toISOString(),
-          callbackUrl: `http://localhost:3001/api/agents/${taskId}/complete`,
-          backend: 'hermes-api-fallback',
-        },
-        null,
-        2
-      )
-    );
-
-    log.info(`[HermesAgent] Wrote fallback agent request for task ${taskId} to ${requestFile}`);
-    return {
-      backend: 'request-file',
+    const run = await sendGatewayRun(
+      prompt,
       sessionKey,
-      requestFile,
+      'You are HermesAgent executing a Veritas kanban task. Follow the task prompt exactly and keep Veritas board truth updated through its API.'
+    );
+    log.info({ taskId, attemptId, runId: run.runId }, '[HermesAgent] Started Hermes API run');
+    return {
+      backend: 'hermes-api',
+      runId: run.runId,
+      sessionKey,
     };
   }
 
@@ -509,19 +460,6 @@ export class HermesAgentService {
 
     // Clean up
     pendingAgents.delete(taskId);
-
-    // Remove request file
-    const requestFile = path.join(
-      PROJECT_ROOT,
-      '.veritas-kanban',
-      'agent-requests',
-      `${taskId}.json`
-    );
-    try {
-      await fs.unlink(requestFile);
-    } catch {
-      // Ignore if already deleted
-    }
 
     log.info(`[HermesAgent] Task ${taskId} completed with status: ${status}`);
   }
@@ -574,34 +512,11 @@ export class HermesAgentService {
   }
 
   /**
-   * List all pending agent requests (for Veritas to poll)
+   * Request-file polling queue retired. Veritas task runnable/claim APIs and
+   * HermesAgent /v1/runs are the only queue/runtime surfaces.
    */
-  async listPendingRequests(): Promise<
-    Array<{
-      taskId: string;
-      attemptId: string;
-      prompt: string;
-      requestedAt: string;
-      callbackUrl: string;
-    }>
-  > {
-    const requestsDir = path.join(PROJECT_ROOT, '.veritas-kanban', 'agent-requests');
-
-    try {
-      const files = await fs.readdir(requestsDir);
-      const requests = await Promise.all(
-        files
-          .filter((f) => f.endsWith('.json'))
-          .map(async (f) => {
-            const content = await fs.readFile(path.join(requestsDir, f), 'utf-8');
-            return JSON.parse(content);
-          })
-      );
-      return requests;
-    } catch {
-      // Intentionally silent: requests directory may not exist — return empty list
-      return [];
-    }
+  async listPendingRequests(): Promise<never[]> {
+    return [];
   }
 
   async getAttemptLog(taskId: string, attemptId: string): Promise<string> {
@@ -705,7 +620,5 @@ ${prompt}
   }
 }
 
-// Export singleton with Hermes-native name plus legacy compatibility aliases.
+// Export singleton with Hermes-native name.
 export const hermesAgentService = new HermesAgentService();
-export const clawdbotAgentService = hermesAgentService;
-export { HermesAgentService as ClawdbotAgentService };

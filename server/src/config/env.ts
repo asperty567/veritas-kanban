@@ -109,21 +109,14 @@ const baseEnvSchema = z.object({
   TELEMETRY_COMPRESS_DAYS: positiveIntString,
 
   // ── External Services ───────────────────────────────────────────────
-  /** Hermes gateway URL. Prefer this over legacy CLAWDBOT_GATEWAY. */
+  /** Hermes API server URL used for runtime runs. */
   HERMES_GATEWAY: z.string().url().optional(),
-
-  /** Legacy compatibility alias for Hermes gateway URL */
-  CLAWDBOT_GATEWAY: z.string().url().optional(),
 });
 
-export const envSchema = baseEnvSchema.transform((env) => {
-  const hermesGateway = env.HERMES_GATEWAY ?? env.CLAWDBOT_GATEWAY ?? 'http://127.0.0.1:18789';
-  return {
-    ...env,
-    HERMES_GATEWAY: hermesGateway,
-    CLAWDBOT_GATEWAY: env.CLAWDBOT_GATEWAY ?? hermesGateway,
-  };
-});
+export const envSchema = baseEnvSchema.transform((env) => ({
+  ...env,
+  HERMES_GATEWAY: env.HERMES_GATEWAY ?? 'http://127.0.0.1:8642',
+}));
 
 // ---------------------------------------------------------------------------
 // Types

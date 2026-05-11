@@ -133,7 +133,7 @@ export interface StepRun {
   stepId: string;
   status: StepRunStatus;
   agent?: string;
-  sessionKey?: string; // OpenClaw session key
+  sessionKey?: string; // HermesAgent session key
   startedAt?: string;
   completedAt?: string;
   duration?: number; // seconds
@@ -174,6 +174,9 @@ export interface StepSessionConfig {
 export interface StepExecutionResult {
   output: unknown; // Parsed output (for context passing)
   outputPath: string; // Path to output file
+  sessionKey?: string; // HermesAgent session key for workflow observability
+  runId?: string; // HermesAgent run id for runtime status polling
+  status?: string; // HermesAgent run status at dispatch time
 }
 
 // ==================== RBAC & Audit Types ====================

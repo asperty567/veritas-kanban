@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
@@ -71,6 +71,26 @@ function getRunningProfile(task: Task): string | undefined {
   return task.attempt.agent;
 }
 
+function getActiveTimerStartMs(task: Task): number | null {
+  if (!task.timeTracking?.isRunning) return null;
+  const activeEntryId = task.timeTracking.activeEntryId;
+  const activeEntry = activeEntryId
+    ? task.timeTracking.entries.find((entry) => entry.id === activeEntryId)
+    : task.timeTracking.entries.find((entry) => !entry.endTime);
+  const startedAt = activeEntry?.startTime;
+  if (!startedAt) return null;
+  const startMs = new Date(startedAt).getTime();
+  return Number.isFinite(startMs) ? startMs : null;
+}
+
+function getRunningTimerSeconds(task: Task, nowMs: number): number {
+  const baseSeconds = task.timeTracking?.totalSeconds || 0;
+  const startMs = getActiveTimerStartMs(task);
+  if (startMs === null) return baseSeconds;
+  const activeSeconds = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  return baseSeconds + activeSeconds;
+}
+
 const blockedCategoryInfo: Record<
   BlockedCategory,
   { label: string; shortLabel: string; icon: React.ElementType }
@@ -126,6 +146,18 @@ function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolea
     if ((pt.agents || []).join('|') !== (nt.agents || []).join('|')) return false;
     if (pt.timeTracking?.totalSeconds !== nt.timeTracking?.totalSeconds) return false;
     if (pt.timeTracking?.isRunning !== nt.timeTracking?.isRunning) return false;
+    if (pt.timeTracking?.activeEntryId !== nt.timeTracking?.activeEntryId) return false;
+    const pActiveStart = pt.timeTracking?.entries.find(
+      (entry) =>
+        entry.id === pt.timeTracking?.activeEntryId ||
+        (!pt.timeTracking?.activeEntryId && !entry.endTime)
+    )?.startTime;
+    const nActiveStart = nt.timeTracking?.entries.find(
+      (entry) =>
+        entry.id === nt.timeTracking?.activeEntryId ||
+        (!nt.timeTracking?.activeEntryId && !entry.endTime)
+    )?.startTime;
+    if (pActiveStart !== nActiveStart) return false;
     if (pt.attempt?.status !== nt.attempt?.status) return false;
     if (pt.attempt?.agent !== nt.attempt?.agent) return false;
     if (pt.claim?.agent !== nt.claim?.agent) return false;
@@ -258,8 +290,18 @@ export const TaskCard = memo(function TaskCard({
 
   const runningProfile = getRunningProfile(task);
   const isAgentRunning = Boolean(runningProfile);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const activeTimerStartMs = getActiveTimerStartMs(task);
+  const displayedTimeSeconds = getRunningTimerSeconds(task, nowMs);
   const assignedProfiles = useMemo(() => getAssignedProfiles(task), [task.agent, task.agents]);
   const isAutoRouting = task.agent === 'auto' || (!task.agent && assignedProfiles.length === 0);
+
+  useEffect(() => {
+    if (!activeTimerStartMs) return;
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [activeTimerStartMs]);
 
   // Memoize type info
   const { typeLabel, TypeIconComponent, typeColor } = useMemo(() => {
@@ -626,7 +668,7 @@ export const TaskCard = memo(function TaskCard({
                   ) : (
                     <Clock className="h-3 w-3" />
                   )}
-                  {formatDuration(task.timeTracking?.totalSeconds || 0)}
+                  {formatDuration(displayedTimeSeconds)}
                 </span>
               )}
               {/* Agent run metrics (for done tasks only) */}
