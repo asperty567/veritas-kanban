@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import type { RegisteredAgent } from '@/lib/api/agent';
 import { Clock, Cpu, Globe, Zap, CircleDot, ChevronDown, ChevronRight } from 'lucide-react';
 import { useState, useMemo } from 'react';
+import { HERMES_AGENT_ROSTER } from '@veritas-kanban/shared';
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ const STATUS_STYLES = {
   online: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)', label: 'Online' },
   busy: { color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)', label: 'Busy' },
   idle: { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.08)', label: 'Idle' },
-  offline: { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.08)', label: 'Offline' },
+  offline: { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.08)', label: 'Off-shift' },
   error: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)', label: 'Error' },
 } as const;
 
@@ -195,10 +196,18 @@ export function MultiAgentPanel({ onTaskClick }: MultiAgentPanelProps) {
 
     // Map currently active agents from real-time status
     for (const active of realtimeStatus.activeAgents) {
-      activeMap.set(active.agent.toLowerCase(), {
+      const normalized =
+        active.agent.toLowerCase() === 'default' ? 'hermes' : active.agent.toLowerCase();
+      activeMap.set(normalized, {
         taskId: active.taskId,
         taskTitle: active.taskTitle,
       });
+      if (normalized === 'hermes') {
+        activeMap.set('default', {
+          taskId: active.taskId,
+          taskTitle: active.taskTitle,
+        });
+      }
     }
 
     // Start with registered agents
@@ -216,30 +225,19 @@ export function MultiAgentPanel({ onTaskClick }: MultiAgentPanelProps) {
       };
     });
 
-    // Add any active agents that aren't in the registry
-    for (const [key, info] of activeMap.entries()) {
-      const exists = cards.some(
-        (c) => c.agent.id.toLowerCase() === key || c.agent.name.toLowerCase() === key
-      );
-      if (!exists) {
-        cards.push({
-          agent: {
-            id: key,
-            name: key,
-            status: 'online' as const,
-            registeredAt: new Date().toISOString(),
-          },
-          isActive: true,
-          activeInfo: info,
-        });
-      }
-    }
+    // Historical/unknown active-agent labels are deliberately not rendered here.
+    // Registry/list endpoint owns the canonical HermesAgent roster (8 profiles).
 
-    // Sort: active first, then by name
+    // Sort: running first, then canonical HermesAgent roster order
     cards.sort((a, b) => {
       if (a.isActive && !b.isActive) return -1;
       if (!a.isActive && b.isActive) return 1;
-      return a.agent.name.localeCompare(b.agent.name);
+      const aIndex = HERMES_AGENT_ROSTER.indexOf(a.agent.id.toLowerCase() as any);
+      const bIndex = HERMES_AGENT_ROSTER.indexOf(b.agent.id.toLowerCase() as any);
+      return (
+        (aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex) -
+        (bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex)
+      );
     });
 
     return cards;

@@ -7,32 +7,42 @@ import request from 'supertest';
 import express from 'express';
 
 // Use vi.hoisted to declare mocks that vi.mock factories can reference
-const { mockTaskService, mockWorktreeService, mockBlockingService, mockActivityService } =
-  vi.hoisted(() => ({
-    mockTaskService: {
-      listTasks: vi.fn(),
-      getTask: vi.fn(),
-      createTask: vi.fn(),
-      updateTask: vi.fn(),
-      deleteTask: vi.fn(),
-      reorderTasks: vi.fn(),
-    },
-    mockWorktreeService: {
-      createWorktree: vi.fn(),
-      getWorktreeStatus: vi.fn(),
-      deleteWorktree: vi.fn(),
-      rebaseWorktree: vi.fn(),
-      mergeWorktree: vi.fn(),
-      openInVSCode: vi.fn(),
-    },
-    mockBlockingService: {
-      getBlockingStatus: vi.fn(),
-      canMoveToInProgress: vi.fn(),
-    },
-    mockActivityService: {
-      logActivity: vi.fn().mockResolvedValue(undefined),
-    },
-  }));
+const {
+  mockTaskService,
+  mockWorktreeService,
+  mockBlockingService,
+  mockActivityService,
+  mockProgressService,
+} = vi.hoisted(() => ({
+  mockTaskService: {
+    listTasks: vi.fn(),
+    getTask: vi.fn(),
+    createTask: vi.fn(),
+    updateTask: vi.fn(),
+    deleteTask: vi.fn(),
+    reorderTasks: vi.fn(),
+  },
+  mockWorktreeService: {
+    createWorktree: vi.fn(),
+    getWorktreeStatus: vi.fn(),
+    deleteWorktree: vi.fn(),
+    rebaseWorktree: vi.fn(),
+    mergeWorktree: vi.fn(),
+    openInVSCode: vi.fn(),
+  },
+  mockBlockingService: {
+    getBlockingStatus: vi.fn(),
+    canMoveToInProgress: vi.fn(),
+  },
+  mockActivityService: {
+    logActivity: vi.fn().mockResolvedValue(undefined),
+  },
+  mockProgressService: {
+    getProgress: vi.fn(),
+    updateProgress: vi.fn(),
+    appendProgress: vi.fn().mockResolvedValue(undefined),
+  },
+}));
 
 vi.mock('../../services/task-service.js', () => ({
   getTaskService: () => mockTaskService,
@@ -53,6 +63,10 @@ vi.mock('../../services/blocking-service.js', () => ({
 
 vi.mock('../../services/activity-service.js', () => ({
   activityService: mockActivityService,
+}));
+
+vi.mock('../../services/progress-service.js', () => ({
+  getProgressService: () => mockProgressService,
 }));
 
 vi.mock('../../services/broadcast-service.js', () => ({
@@ -409,6 +423,77 @@ describe('Tasks Routes (actual module)', () => {
       const res = await request(app).get('/api/tasks/t1/context');
       expect(res.status).toBe(200);
       expect(res.body.attachments.count).toBe(2);
+    });
+  });
+
+  describe('POST /api/tasks/:id/writeback', () => {
+    it('appends progress, ticks criteria, and completes only with QA evidence', async () => {
+      const task = {
+        id: 't1',
+        title: 'Task',
+        status: 'in-progress',
+        subtasks: [
+          {
+            id: 's1',
+            title: 'Verify',
+            completed: false,
+            acceptanceCriteria: ['progress appended', 'qa proof exists'],
+            criteriaChecked: [false, false],
+          },
+        ],
+      };
+      mockTaskService.getTask.mockResolvedValue(task);
+      mockTaskService.updateTask.mockImplementation(async (_id, updates) => ({
+        ...task,
+        ...updates,
+      }));
+
+      const res = await request(app)
+        .post('/api/tasks/t1/writeback')
+        .send({
+          progress: { section: 'Progress', content: 'Router writeback inspected.' },
+          criteria: [
+            { subtaskId: 's1', criteriaIndex: 0 },
+            { subtaskId: 's1', criteriaIndex: 1 },
+          ],
+          complete: true,
+          qa: { evidence: 'vitest route coverage added', passedBy: 'orbit' },
+        });
+
+      expect(res.status).toBe(200);
+      expect(mockProgressService.appendProgress).toHaveBeenCalledWith(
+        't1',
+        'Progress',
+        'Router writeback inspected.'
+      );
+      expect(mockProgressService.appendProgress).toHaveBeenCalledWith(
+        't1',
+        'QA Evidence',
+        'vitest route coverage added'
+      );
+      expect(mockTaskService.updateTask).toHaveBeenCalledWith(
+        't1',
+        expect.objectContaining({
+          status: 'done',
+          qaGate: expect.objectContaining({ required: true, passed: true, passedBy: 'orbit' }),
+          subtasks: [
+            expect.objectContaining({
+              id: 's1',
+              completed: true,
+              criteriaChecked: [true, true],
+            }),
+          ],
+        })
+      );
+    });
+
+    it('refuses completion without QA evidence or existing passed QA gate', async () => {
+      mockTaskService.getTask.mockResolvedValue({ id: 't1', title: 'Task', status: 'in-progress' });
+
+      const res = await request(app).post('/api/tasks/t1/writeback').send({ complete: true });
+
+      expect(res.status).toBe(400);
+      expect(mockTaskService.updateTask).not.toHaveBeenCalled();
     });
   });
 });

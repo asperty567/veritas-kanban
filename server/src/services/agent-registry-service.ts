@@ -12,6 +12,12 @@ import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from '../storage/fs-helpers.js';
 import { createLogger } from '../lib/logger.js';
 import { getRuntimeDir } from '../utils/paths.js';
+import {
+  DEFAULT_RUNNING_HERMES_AGENT_IDS,
+  HERMES_AGENT_DISPLAY_NAMES,
+  HERMES_AGENT_ROSTER,
+  isHermesAgentId,
+} from '@veritas-kanban/shared';
 
 const log = createLogger('agent-registry');
 
@@ -49,7 +55,7 @@ export interface RegisteredAgent {
   currentTaskId?: string;
   /** Current task title */
   currentTaskTitle?: string;
-  /** Session key (for OpenClaw/orchestrator integration) */
+  /** Runtime session key (HermesAgent / Veritas workflow integration) */
   sessionKey?: string;
 }
 
@@ -65,7 +71,7 @@ export interface AgentRegistration {
 }
 
 export interface AgentHeartbeat {
-  status?: 'online' | 'busy' | 'idle';
+  status?: 'online' | 'busy' | 'idle' | 'offline';
   currentTaskId?: string;
   currentTaskTitle?: string;
   metadata?: Record<string, unknown>;
@@ -144,11 +150,79 @@ function getTaskSyncFlapGuardMs(): number {
   return parsed;
 }
 
+function parseRunningHermesProfiles(): Set<string> {
+  const raw = process.env.HERMES_RUNNING_PROFILES || process.env.VERITAS_RUNNING_HERMES_PROFILES;
+  const ids = raw
+    ? raw
+        .split(',')
+        .map((item) => item.trim().toLowerCase())
+        .filter(isHermesAgentId)
+    : [...DEFAULT_RUNNING_HERMES_AGENT_IDS];
+  return new Set(ids);
+}
+
+function mergeWithHermesRuntimeRoster(agents: RegisteredAgent[]): RegisteredAgent[] {
+  const now = new Date().toISOString();
+  const runningProfiles = parseRunningHermesProfiles();
+  const byCanonicalId = new Map<string, RegisteredAgent>();
+
+  for (const agent of agents) {
+    const id = agent.id.trim().toLowerCase();
+    const name = agent.name.trim().toLowerCase();
+    const canonicalId = isHermesAgentId(id) ? id : isHermesAgentId(name) ? name : null;
+    if (!canonicalId) continue;
+    byCanonicalId.set(canonicalId, agent);
+  }
+
+  return HERMES_AGENT_ROSTER.map((id: string) => {
+    const existing = byCanonicalId.get(id);
+    const runtimeStatus: RegisteredAgent['status'] = runningProfiles.has(id) ? 'online' : 'offline';
+    return {
+      ...(existing ?? {
+        id,
+        name: HERMES_AGENT_DISPLAY_NAMES[id as keyof typeof HERMES_AGENT_DISPLAY_NAMES],
+        capabilities: [],
+        registeredAt: now,
+        lastHeartbeat: now,
+      }),
+      id,
+      name: HERMES_AGENT_DISPLAY_NAMES[id as keyof typeof HERMES_AGENT_DISPLAY_NAMES],
+      status: runningProfiles.has(id) && existing?.status === 'busy' ? 'busy' : runtimeStatus,
+      capabilities: existing?.capabilities ?? [],
+      registeredAt: existing?.registeredAt ?? now,
+      lastHeartbeat: runningProfiles.has(id) ? now : (existing?.lastHeartbeat ?? now),
+    };
+  });
+}
+
 /** Defensive cap to avoid pathological reconciliation payload sizes */
 const MAX_RECONCILE_BATCH = 10_000;
 
 /** Basic ref validation for task-agent sync paths */
 const AGENT_REF_REGEX = /^[a-zA-Z0-9._: -]{1,100}$/;
+
+/** Canonical HermesAgent roster allowed for task assignment. */
+const HERMES_AGENT_REF_ALIASES = new Map<string, string>([
+  ['default', 'hermes'],
+  ['hermes', 'hermes'],
+  ['hawk', 'hawk'],
+  ['blitz', 'blitz'],
+  ['aura', 'aura'],
+  ['forge', 'forge'],
+  ['midas', 'midas'],
+  ['orbit', 'orbit'],
+  ['signal', 'signal'],
+  ['helm', 'helm'],
+  ['scops', 'scops'],
+  ['sc ops', 'scops'],
+  ['sc-ops', 'scops'],
+  ['SC Ops', 'scops'],
+]);
+
+function normalizeHermesAgentRef(agentRef: string): string | null {
+  const normalized = agentRef.trim().toLowerCase();
+  return HERMES_AGENT_REF_ALIASES.get(normalized) ?? null;
+}
 
 // ─── Service ─────────────────────────────────────────────────────
 
@@ -273,7 +347,10 @@ class AgentRegistryService {
         return agent;
       }
 
-      agent.status = 'idle';
+      // Preserve a known-offline profile gateway as offline while clearing the stale task
+      // linkage. A terminal task should not make an off-shift gateway look idle/online,
+      // but it also must not keep showing a completed task as current work.
+      agent.status = previousStatus === 'offline' ? 'offline' : 'idle';
       agent.currentTaskId = undefined;
       agent.currentTaskTitle = undefined;
     }
@@ -348,7 +425,7 @@ class AgentRegistryService {
         continue;
       }
 
-      if (agent.status === 'busy' && agent.currentTaskId) {
+      if (agent.currentTaskId) {
         const task = tasks.find((t) => t.id === agent.currentTaskId);
         if (task && task.status !== 'in-progress') {
           const prevStatus = agent.status;
@@ -410,7 +487,25 @@ class AgentRegistryService {
   }
 
   /**
-   * Find agents that have a specific capability.
+   * HermesAgent runtime roster view for dashboards/control-plane truth.
+   * Filters out stale historical registry labels and always returns the 8 canonical profiles.
+   */
+  runtimeList(filters?: { status?: string; capability?: string }): RegisteredAgent[] {
+    let agents = mergeWithHermesRuntimeRoster(Array.from(this.agents.values()));
+
+    if (filters?.status) {
+      agents = agents.filter((a) => a.status === filters.status);
+    }
+
+    if (filters?.capability) {
+      agents = agents.filter((a) => a.capabilities.some((c) => c.name === filters.capability));
+    }
+
+    return agents;
+  }
+
+  /**
+   * Get agents by capability.
    */
   findByCapability(capability: string): RegisteredAgent[] {
     const cap = capability.toLowerCase();
@@ -431,6 +526,32 @@ class AgentRegistryService {
     capabilities: string[];
   } {
     const agents = Array.from(this.agents.values());
+    const allCaps = new Set<string>();
+    for (const agent of agents) {
+      for (const cap of agent.capabilities) {
+        allCaps.add(cap.name);
+      }
+    }
+
+    return {
+      total: agents.length,
+      online: agents.filter((a) => a.status === 'online').length,
+      busy: agents.filter((a) => a.status === 'busy').length,
+      idle: agents.filter((a) => a.status === 'idle').length,
+      offline: agents.filter((a) => a.status === 'offline').length,
+      capabilities: Array.from(allCaps).sort(),
+    };
+  }
+
+  runtimeStats(): {
+    total: number;
+    online: number;
+    busy: number;
+    idle: number;
+    offline: number;
+    capabilities: string[];
+  } {
+    const agents = this.runtimeList();
     const allCaps = new Set<string>();
     for (const agent of agents) {
       for (const cap of agent.capabilities) {
@@ -472,9 +593,8 @@ class AgentRegistryService {
       return { valid: false, reason: `Malformed agent ref: ${agentRef}` };
     }
 
-    const agent = this.findByRef(agentRef);
-    if (!agent) {
-      return { valid: false, reason: `Unknown agent ref: ${agentRef} — not found in registry` };
+    if (!normalizeHermesAgentRef(agentRef)) {
+      return { valid: false, reason: `Unknown HermesAgent profile: ${agentRef}` };
     }
 
     return { valid: true };

@@ -43,7 +43,7 @@ export const automationTools = [
         },
         sessionKey: {
           type: 'string',
-          description: 'Clawdbot session key (optional)',
+          description: 'Hermes session key (optional)',
         },
       },
       required: ['id'],
@@ -100,13 +100,15 @@ export async function handleAutomationTool(name: string, args: any): Promise<any
         };
       }
 
-      const result = await api<{ taskId: string; attemptId: string; title: string; description: string }>(
-        `/api/automation/${task.id}/start`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ sessionKey }),
-        }
-      );
+      const result = await api<{
+        taskId: string;
+        attemptId: string;
+        title: string;
+        description: string;
+      }>(`/api/automation/${task.id}/start`, {
+        method: 'POST',
+        body: JSON.stringify({ sessionKey }),
+      });
 
       return {
         content: [

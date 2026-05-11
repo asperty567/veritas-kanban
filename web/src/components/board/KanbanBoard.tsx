@@ -218,14 +218,14 @@ export function KanbanBoard() {
 
   return (
     <>
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center">
         <FilterBar tasks={tasks || []} filters={filters} onFiltersChange={setFilters} />
         {!isSelecting && (
           <Button
             variant="ghost"
             size="sm"
             onClick={toggleSelecting}
-            className="text-muted-foreground shrink-0"
+            className="text-muted-foreground shrink-0 self-start sm:self-auto"
           >
             <CheckSquare className="h-4 w-4 mr-1" />
             Select
@@ -238,9 +238,9 @@ export function KanbanBoard() {
       {featureSettings.board.showArchiveSuggestions && <ArchiveSuggestionBanner />}
 
       <FeatureErrorBoundary fallbackTitle="Board failed to render">
-        <div className="grid grid-cols-5 gap-4">
+        <div className="veritas-board-layout grid grid-cols-1 gap-4 xl:grid-cols-5">
           <section
-            className="col-span-4"
+            className="veritas-kanban-board xl:col-span-4"
             aria-label={`Kanban board, ${filteredTasks.length} tasks`}
           >
             {featureSettings.board.enableDragAndDrop ? (
@@ -251,7 +251,11 @@ export function KanbanBoard() {
                 onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
               >
-                <div className="grid grid-cols-4 gap-4" role="group" aria-label="Kanban columns">
+                <div
+                  className="veritas-kanban-columns grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4"
+                  role="group"
+                  aria-label="Kanban columns"
+                >
                   {COLUMNS.map((column) => (
                     <KanbanColumn
                       key={column.id}
@@ -271,7 +275,11 @@ export function KanbanBoard() {
                 </DragOverlay>
               </DndContext>
             ) : (
-              <div className="grid grid-cols-4 gap-4" role="group" aria-label="Kanban columns">
+              <div
+                className="veritas-kanban-columns grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4"
+                role="group"
+                aria-label="Kanban columns"
+              >
                 {COLUMNS.map((column) => (
                   <KanbanColumn
                     key={column.id}

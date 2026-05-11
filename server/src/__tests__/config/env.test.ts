@@ -177,7 +177,8 @@ describe('envSchema', () => {
         expect(result.data.VERITAS_API_KEYS).toBe('');
         expect(result.data.RATE_LIMIT_MAX).toBe(300);
         expect(result.data.CSP_REPORT_ONLY).toBe(false);
-        expect(result.data.CLAWDBOT_GATEWAY).toBe('http://127.0.0.1:18789');
+        expect(result.data.HERMES_GATEWAY).toBe('http://127.0.0.1:8642');
+        expect('CLAWDBOT_GATEWAY' in result.data).toBe(false);
       }
     });
 
@@ -275,22 +276,35 @@ describe('envSchema', () => {
     });
   });
 
-  describe('CLAWDBOT_GATEWAY', () => {
-    it('should accept a valid URL', () => {
+  describe('HERMES_GATEWAY', () => {
+    it('should accept the HermesAgent API URL without exposing legacy OpenClaw aliases', () => {
+      const result = envSchema.safeParse({
+        VERITAS_ADMIN_KEY: 'test-key',
+        HERMES_GATEWAY: 'http://127.0.0.1:8642',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.HERMES_GATEWAY).toBe('http://127.0.0.1:8642');
+        expect('CLAWDBOT_GATEWAY' in result.data).toBe(false);
+      }
+    });
+
+    it('should ignore the legacy compatibility alias and keep the HermesAgent default', () => {
       const result = envSchema.safeParse({
         VERITAS_ADMIN_KEY: 'test-key',
         CLAWDBOT_GATEWAY: 'http://192.168.1.100:18789',
       });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.CLAWDBOT_GATEWAY).toBe('http://192.168.1.100:18789');
+        expect(result.data.HERMES_GATEWAY).toBe('http://127.0.0.1:8642');
+        expect('CLAWDBOT_GATEWAY' in result.data).toBe(false);
       }
     });
 
-    it('should reject an invalid URL', () => {
+    it('should reject an invalid HermesAgent gateway URL', () => {
       const result = envSchema.safeParse({
         VERITAS_ADMIN_KEY: 'test-key',
-        CLAWDBOT_GATEWAY: 'not-a-url',
+        HERMES_GATEWAY: 'not-a-url',
       });
       expect(result.success).toBe(false);
     });

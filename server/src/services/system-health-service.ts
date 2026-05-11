@@ -68,7 +68,11 @@ function buildSystemSignal(storage: boolean, disk: boolean, memory: boolean): Sy
 function buildAgentSignal(): AgentSignal {
   try {
     const registry = getAgentRegistryService();
-    const agents = registry.list();
+    // Dashboard health should reflect the canonical Hermes runtime roster, not
+    // the historical/raw registry. The raw registry can contain retired labels
+    // and stale heartbeat-only rows, which caused the status bar to show
+    // "11 offline" even while the live Hermes runtime had active agents.
+    const agents = registry.runtimeList();
     const total = agents.length;
     const online = agents.filter(
       (a) => a.status === 'online' || a.status === 'busy' || a.status === 'idle'

@@ -9,6 +9,10 @@ import {
   statusHistoryService,
   type AgentStatusState as HistoryStatusState,
 } from '../services/status-history-service.js';
+import {
+  getAgentRegistryService,
+  type RegisteredAgent,
+} from '../services/agent-registry-service.js';
 import { createLogger } from '../lib/logger.js';
 const log = createLogger('agent-status');
 
@@ -203,6 +207,45 @@ export function getAgentStatus(): AgentStatus {
   return { ...currentStatus };
 }
 
+function registryStatusToAgentStatus(status: RegisteredAgent['status']): AgentStatusState {
+  switch (status) {
+    case 'busy':
+      return 'working';
+    case 'offline':
+      return 'idle';
+    case 'online':
+    case 'idle':
+    default:
+      return 'thinking';
+  }
+}
+
+/**
+ * Build a Hermes-native registry-backed view for the legacy global status endpoint.
+ *
+ * `/api/agent/status` predates the agent registry and is kept as a compatibility
+ * alias for existing clients. Prefer registry data when the legacy status payload
+ * has no activeAgents so HermesAgent/Hermes-native registrations remain visible
+ * without requiring legacy callers to POST global status separately.
+ */
+function getRegistryActiveAgents(): ActiveAgent[] {
+  try {
+    return getAgentRegistryService()
+      .runtimeList()
+      .filter((agent) => agent.status !== 'offline')
+      .map((agent) => ({
+        agent: agent.name || agent.id,
+        status: registryStatusToAgentStatus(agent.status),
+        taskId: agent.currentTaskId,
+        taskTitle: agent.currentTaskTitle,
+        startedAt: agent.lastHeartbeat || agent.registeredAt,
+      }));
+  } catch (err) {
+    log.warn({ err }, '[AgentStatus] Could not read registry-backed compatibility status');
+    return [];
+  }
+}
+
 // Validation schema for POST
 const activeAgentSchema = z.object({
   agent: z.string(),
@@ -232,11 +275,17 @@ router.get(
   '/',
   asyncHandler(async (_req, res) => {
     const { activeTask, errorMessage, activeAgents, ...rest } = currentStatus;
+    const registryActiveAgents = activeAgents?.length ? [] : getRegistryActiveAgents();
+    const effectiveActiveAgents = activeAgents?.length ? activeAgents : registryActiveAgents;
+    const effectiveStatus =
+      rest.status === 'idle' && effectiveActiveAgents.length > 0 ? 'sub-agent' : rest.status;
     res.json({
       ...rest,
+      status: effectiveStatus,
       activeTask: activeTask?.id,
       activeTaskTitle: activeTask?.title,
-      activeAgents: activeAgents || [],
+      subAgentCount: Math.max(rest.subAgentCount, effectiveActiveAgents.length),
+      activeAgents: effectiveActiveAgents,
       error: errorMessage,
     });
   })

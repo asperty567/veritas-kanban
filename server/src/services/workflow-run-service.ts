@@ -189,9 +189,21 @@ export class WorkflowRunService {
               1000
           );
           stepRun.output = result.outputPath;
+          if (result.sessionKey) stepRun.sessionKey = result.sessionKey;
 
           // Merge step output into run context
           run.context[step.id] = result.output;
+          if (result.runId) {
+            run.context._runtimeRuns = {
+              ...((run.context._runtimeRuns as Record<string, unknown> | undefined) ?? {}),
+              [step.id]: {
+                provider: 'hermes-agent',
+                runId: result.runId,
+                sessionKey: result.sessionKey,
+                status: result.status,
+              },
+            };
+          }
 
           await this.saveRun(run);
           broadcastWorkflowStatus(run);

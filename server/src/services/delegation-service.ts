@@ -5,6 +5,7 @@
  * delegate task approval authority to a designated agent.
  */
 
+import { mkdirSync } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { nanoid } from 'nanoid';
@@ -31,8 +32,8 @@ export class DelegationService {
     this.ensureDir();
   }
 
-  private async ensureDir(): Promise<void> {
-    await fs.mkdir(DELEGATION_DIR, { recursive: true });
+  private ensureDir(): void {
+    mkdirSync(DELEGATION_DIR, { recursive: true });
   }
 
   /**

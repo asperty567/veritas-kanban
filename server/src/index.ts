@@ -40,6 +40,7 @@ import {
   authorize,
   authorizeWrite,
   authenticateWebSocket,
+  getSafeWebSocketCloseReason,
   validateWebSocketOrigin,
   getAuthStatus,
   checkAdminKeyStrength,
@@ -52,7 +53,7 @@ import { swaggerSpec } from './config/swagger.js';
 import { apiRateLimit, authRateLimit } from './middleware/rate-limit.js';
 import { apiVersionMiddleware } from './middleware/api-version.js';
 import { apiCacheHeaders } from './middleware/cache-control.js';
-import type { AgentOutput } from './services/clawdbot-agent-service.js';
+import type { AgentOutput } from './services/hermes-agent-service.js';
 import { taskArchiveRoutes } from './routes/task-archive.js';
 import { taskTimeRoutes } from './routes/task-time.js';
 import { taskRoutes } from './routes/tasks.js';
@@ -670,8 +671,9 @@ wss.on('connection', (ws: HeartbeatWebSocket, req) => {
   const authResult = authenticateWebSocket(req);
 
   if (!authResult.authenticated) {
-    log.warn({ error: authResult.error }, 'WebSocket connection rejected');
-    ws.close(4001, authResult.error || 'Authentication required');
+    const closeReason = getSafeWebSocketCloseReason(authResult.error);
+    log.warn({ error: authResult.error, closeReason }, 'WebSocket connection rejected');
+    ws.close(4001, closeReason);
     return;
   }
 

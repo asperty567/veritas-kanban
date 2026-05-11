@@ -15,10 +15,24 @@ import os from 'os';
 import { healthRouter } from '../../routes/health.js';
 import { errorHandler } from '../../middleware/error-handler.js';
 
+vi.mock('../../config/security.js', () => ({
+  getSecurityConfig: vi.fn(() => ({
+    authEnabled: true,
+    passwordHash: null,
+    jwtSecret: 'test-secret-key',
+  })),
+  getJwtSecret: vi.fn(() => 'test-secret-key'),
+  getValidJwtSecrets: vi.fn(() => ['test-secret-key']),
+}));
+
 describe('Health Routes', () => {
   let app: express.Express;
   let testDataDir: string;
   let originalDataDir: string | undefined;
+  let originalNodeEnv: string | undefined;
+  let originalAuthEnabled: string | undefined;
+  let originalAdminKey: string | undefined;
+  let originalLocalhostBypass: string | undefined;
 
   beforeEach(async () => {
     // Create a temp data directory for testing
@@ -29,9 +43,17 @@ describe('Health Routes', () => {
     // Write a valid tasks.json
     await fs.writeFile(path.join(testDataDir, 'tasks.json'), JSON.stringify([]));
 
-    // Set DATA_DIR env var
+    // Set DATA_DIR env var and isolate auth-sensitive tests from the host runtime.
     originalDataDir = process.env.DATA_DIR;
+    originalNodeEnv = process.env.NODE_ENV;
+    originalAuthEnabled = process.env.VERITAS_AUTH_ENABLED;
+    originalAdminKey = process.env.VERITAS_ADMIN_KEY;
+    originalLocalhostBypass = process.env.VERITAS_AUTH_LOCALHOST_BYPASS;
     process.env.DATA_DIR = testDataDir;
+    process.env.NODE_ENV = 'development';
+    process.env.VERITAS_AUTH_ENABLED = 'true';
+    process.env.VERITAS_AUTH_LOCALHOST_BYPASS = 'false';
+    delete process.env.VERITAS_ADMIN_KEY;
 
     // Create test app
     app = express();
@@ -46,6 +68,26 @@ describe('Health Routes', () => {
       process.env.DATA_DIR = originalDataDir;
     } else {
       delete process.env.DATA_DIR;
+    }
+    if (originalNodeEnv !== undefined) {
+      process.env.NODE_ENV = originalNodeEnv;
+    } else {
+      delete process.env.NODE_ENV;
+    }
+    if (originalAuthEnabled !== undefined) {
+      process.env.VERITAS_AUTH_ENABLED = originalAuthEnabled;
+    } else {
+      delete process.env.VERITAS_AUTH_ENABLED;
+    }
+    if (originalAdminKey !== undefined) {
+      process.env.VERITAS_ADMIN_KEY = originalAdminKey;
+    } else {
+      delete process.env.VERITAS_ADMIN_KEY;
+    }
+    if (originalLocalhostBypass !== undefined) {
+      process.env.VERITAS_AUTH_LOCALHOST_BYPASS = originalLocalhostBypass;
+    } else {
+      delete process.env.VERITAS_AUTH_LOCALHOST_BYPASS;
     }
 
     // Clean up test directory

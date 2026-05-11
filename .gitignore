@@ -44,6 +44,7 @@ tasks/attachments/
 tasks/archive-attachments/
 .veritas-kanban/*
 !.veritas-kanban/.gitkeep
+server/storage/
 
 # Historical broken config data (should never have been tracked)
 .veritas-kanban.broken/

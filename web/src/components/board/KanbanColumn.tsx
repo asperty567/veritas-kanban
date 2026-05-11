@@ -98,7 +98,7 @@ export function KanbanColumn({
       </div>
 
       <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex-1 p-2 space-y-2 min-h-[calc(100vh-200px)] overflow-y-auto">
+        <div className="veritas-kanban-column-scroll flex-1 p-2 space-y-2 min-h-[calc(100vh-200px)] overflow-y-auto">
           {tasks.length === 0 ? (
             <div
               className={cn(

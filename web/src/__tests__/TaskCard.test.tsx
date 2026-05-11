@@ -208,6 +208,79 @@ describe('TaskCard', () => {
     expect(screen.getByText(/Claude running/)).toBeDefined();
   });
 
+  it('shows Auto as routing only rather than concrete execution', () => {
+    const task = createMockTask({ agent: 'auto', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Auto route')).toBeDefined();
+    expect(screen.queryByText(/Auto running/)).toBeNull();
+  });
+
+  it('shows concrete Hermes profile assignment on the card', () => {
+    const task = createMockTask({ agent: 'aura', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Profile: Aura')).toBeDefined();
+  });
+
+  it('shows concrete attempt profile/status when execution is running', () => {
+    const task = createMockTask({
+      agent: 'auto',
+      attempt: {
+        id: 'attempt-1',
+        agent: 'aura',
+        status: 'running',
+        started: '2025-01-01T00:00:00Z',
+      },
+    });
+    renderCard(task);
+    expect(screen.getByText(/Aura running/)).toBeDefined();
+    expect(screen.queryByText('Auto route')).toBeNull();
+  });
+
+  it('shows Hermes profile instead of Veritas bridge owner for bridged execution', () => {
+    const task = createMockTask({
+      agent: 'aura',
+      attempt: {
+        id: 'claim_hermes-kanban:t_123',
+        agent: 'veritas',
+        status: 'running',
+        started: '2025-01-01T00:00:00Z',
+      },
+      claim: {
+        agent: 'aura',
+        sessionId: 'hermes-kanban:t_123',
+        claimedAt: '2025-01-01T00:00:00Z',
+        leaseExpiresAt: '2025-01-01T01:00:00Z',
+        routingRule: 'veritas-hermes-kanban-bridge',
+      },
+    });
+    renderCard(task);
+    expect(screen.getByText(/Aura running/)).toBeDefined();
+    expect(screen.queryByText(/Veritas running/)).toBeNull();
+  });
+
+  it('shows Hermes instead of raw default for default profile execution', () => {
+    const task = createMockTask({
+      agent: 'default',
+      attempt: {
+        id: 'claim_hermes-kanban:t_456',
+        agent: 'veritas',
+        status: 'running',
+        started: '2025-01-01T00:00:00Z',
+      },
+      claim: {
+        agent: 'default',
+        sessionId: 'hermes-kanban:t_456',
+        claimedAt: '2025-01-01T00:00:00Z',
+        leaseExpiresAt: '2025-01-01T01:00:00Z',
+        routingRule: 'veritas-hermes-kanban-bridge',
+      },
+    });
+    renderCard(task);
+    expect(screen.getByText(/Hermes running/)).toBeDefined();
+    expect(screen.queryByText(/default running/i)).toBeNull();
+    expect(screen.queryByText(/Veritas running/)).toBeNull();
+  });
+
   it('shows subtask progress', () => {
     const task = createMockTask({
       subtasks: [
@@ -230,6 +303,30 @@ describe('TaskCard', () => {
     });
     renderCard(task);
     expect(screen.getByText('5m')).toBeDefined();
+  });
+
+  it('adds active running entry elapsed time to the clock badge', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-11T10:01:30Z'));
+    try {
+      const task = createMockTask({
+        timeTracking: {
+          entries: [
+            {
+              id: 'timer-1',
+              startTime: '2026-05-11T10:00:00Z',
+            },
+          ],
+          totalSeconds: 0,
+          isRunning: true,
+          activeEntryId: 'timer-1',
+        },
+      });
+      renderCard(task);
+      expect(screen.getByText('1m')).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows attachment count', () => {

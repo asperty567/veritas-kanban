@@ -51,8 +51,12 @@ function sanitizeFeatureSettings(settings: FeatureSettings): FeatureSettings {
   };
 
   if (sanitized.squadWebhook) {
-    if ('openclawGatewayToken' in sanitized.squadWebhook) {
-      delete sanitized.squadWebhook.openclawGatewayToken;
+    for (const key of Object.keys(sanitized.squadWebhook) as Array<
+      keyof FeatureSettings['squadWebhook']
+    >) {
+      if (String(key).toLowerCase().endsWith('gatewaytoken')) {
+        delete sanitized.squadWebhook[key];
+      }
     }
     if ('secret' in sanitized.squadWebhook) {
       delete sanitized.squadWebhook.secret;

@@ -162,40 +162,53 @@ describe('Agent Registry Routes', () => {
     it('should list all registered agents', async () => {
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a1', name: 'Agent 1', capabilities: [{ name: 'code' }] });
+        .send({ id: 'ops', name: 'Ops', capabilities: [{ name: 'legacy' }] });
 
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a2', name: 'Agent 2', capabilities: [{ name: 'deploy' }] });
+        .send({ id: 'hawk', name: 'Hawk', capabilities: [{ name: 'ops' }] });
 
       const res = await request(app).get('/api/agents/register');
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveLength(2);
+      expect(res.body).toHaveLength(10);
+      expect(res.body.map((agent: { id: string }) => agent.id)).toEqual([
+        'default',
+        'hawk',
+        'blitz',
+        'aura',
+        'forge',
+        'midas',
+        'orbit',
+        'signal',
+        'helm',
+        'scops',
+      ]);
+      expect(res.body.find((agent: { id: string }) => agent.id === 'ops')).toBeUndefined();
     });
 
     it('should filter by status', async () => {
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a1', name: 'Agent 1', capabilities: [] });
+        .send({ id: 'hawk', name: 'Hawk', capabilities: [] });
 
       await request(app)
         .post('/api/agents/register')
         .send({ id: 'a2', name: 'Agent 2', capabilities: [] });
 
-      await request(app).post('/api/agents/register/a1/heartbeat').send({ status: 'busy' });
+      await request(app).post('/api/agents/register/hawk/heartbeat').send({ status: 'busy' });
 
       const res = await request(app).get('/api/agents/register').query({ status: 'busy' });
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
-      expect(res.body[0].id).toBe('a1');
+      expect(res.body[0].id).toBe('hawk');
     });
 
     it('should filter by capability', async () => {
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a1', name: 'Agent 1', capabilities: [{ name: 'code' }, { name: 'test' }] });
+        .send({ id: 'hawk', name: 'Hawk', capabilities: [{ name: 'ops' }, { name: 'test' }] });
 
       await request(app)
         .post('/api/agents/register')
@@ -205,7 +218,7 @@ describe('Agent Registry Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
-      expect(res.body[0].id).toBe('a1');
+      expect(res.body[0].id).toBe('hawk');
     });
   });
 
@@ -236,22 +249,23 @@ describe('Agent Registry Routes', () => {
     it('should return registry statistics', async () => {
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a1', name: 'Agent 1', capabilities: [{ name: 'code' }] });
+        .send({ id: 'ops', name: 'Ops', capabilities: [{ name: 'legacy' }] });
 
       await request(app)
         .post('/api/agents/register')
-        .send({ id: 'a2', name: 'Agent 2', capabilities: [{ name: 'deploy' }] });
+        .send({ id: 'hawk', name: 'Hawk', capabilities: [{ name: 'ops' }] });
 
-      await request(app).post('/api/agents/register/a1/heartbeat').send({ status: 'busy' });
+      await request(app).post('/api/agents/register/hawk/heartbeat').send({ status: 'busy' });
 
       const res = await request(app).get('/api/agents/register/stats');
 
       expect(res.status).toBe(200);
-      expect(res.body.total).toBe(2);
+      expect(res.body.total).toBe(10);
       expect(res.body.busy).toBe(1);
-      expect(res.body.online).toBe(1);
-      expect(res.body.capabilities).toContain('code');
-      expect(res.body.capabilities).toContain('deploy');
+      expect(res.body.online).toBe(2);
+      expect(res.body.offline).toBe(7);
+      expect(res.body.capabilities).toContain('ops');
+      expect(res.body.capabilities).not.toContain('legacy');
     });
   });
 

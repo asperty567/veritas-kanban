@@ -320,15 +320,15 @@ export interface DelegationScope {
 /** Squad webhook settings */
 export interface SquadWebhookSettings {
   enabled: boolean;
-  mode: 'webhook' | 'openclaw'; // 'webhook' = generic HTTP POST, 'openclaw' = gateway wake
+  mode: 'webhook' | 'hermes'; // 'webhook' = generic HTTP POST, 'hermes' = HermesAgent /v1/runs wake
   // Generic webhook fields:
   url?: string; // Where to POST notifications
-  secret?: string; // Optional HMAC signing secret for verification
+  secret?: string; // HMAC secret for signing
   notifyOnHuman: boolean; // Fire webhook when human posts (default: true)
   notifyOnAgent: boolean; // Fire webhook when agent posts (default: false)
-  // OpenClaw fields:
-  openclawGatewayUrl?: string; // e.g., "http://127.0.0.1:18789"
-  openclawGatewayToken?: string; // Auth token
+  // HermesAgent API-server fields.
+  hermesGatewayUrl?: string; // e.g., "http://127.0.0.1:8642"
+  hermesGatewayToken?: string; // Auth token
 }
 
 /** All feature settings combined */
@@ -455,7 +455,7 @@ export const DEFAULT_FEATURE_SETTINGS: FeatureSettings = {
     url: '',
     notifyOnHuman: true,
     notifyOnAgent: false,
-    openclawGatewayUrl: '',
-    openclawGatewayToken: '',
+    hermesGatewayUrl: '',
+    hermesGatewayToken: '',
   },
 };

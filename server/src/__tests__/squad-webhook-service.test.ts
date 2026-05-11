@@ -84,7 +84,7 @@ describe('squad webhook service', () => {
     });
   });
 
-  it('fires OpenClaw wake call and validates url', async () => {
+  it('fires HermesAgent run wake call and validates url', async () => {
     fetchSpy.mockResolvedValue({ ok: true, status: 200, statusText: 'OK' });
     const mod = await import('../services/squad-webhook-service.js');
 
@@ -100,22 +100,61 @@ describe('squad webhook service', () => {
         enabled: true,
         notifyOnHuman: true,
         notifyOnAgent: true,
-        mode: 'openclaw',
-        openclawGatewayUrl: 'https://gateway.test',
-        openclawGatewayToken: 'token',
+        mode: 'hermes',
+        hermesGatewayUrl: 'https://gateway.test',
+        hermesGatewayToken: '[REDACTED]',
       } as any
     );
 
-    expect(mockValidateWebhookUrl).toHaveBeenCalledWith('https://gateway.test/tools/invoke');
+    expect(mockValidateWebhookUrl).toHaveBeenCalledWith('https://gateway.test/v1/runs');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toBe('https://gateway.test/tools/invoke');
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://gateway.test/v1/runs');
     expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toMatchObject({
-      tool: 'cron',
-      args: { action: 'wake', mode: 'now' },
+      input: expect.stringContaining('Squad chat from TARS'),
+      session_id: 'veritas:squad:m1',
     });
   });
 
-  it('skips invalid OpenClaw or incomplete config and tolerates failed responses', async () => {
+  it('skips invalid Hermes gateway or incomplete config and tolerates failed responses', async () => {
+    const mod = await import('../services/squad-webhook-service.js');
+    const msg = {
+      id: 'm1',
+      agent: 'TARS',
+      message: 'hello',
+      timestamp: '2026-03-01T00:00:00.000Z',
+    } as any;
+
+    await mod.fireSquadWebhook(msg, {
+      enabled: true,
+      notifyOnHuman: true,
+      notifyOnAgent: true,
+      mode: 'hermes',
+    } as any);
+    mockValidateWebhookUrl.mockReturnValue({ valid: false, reason: 'ssrf' });
+    await mod.fireSquadWebhook(msg, {
+      enabled: true,
+      notifyOnHuman: true,
+      notifyOnAgent: true,
+      mode: 'hermes',
+      hermesGatewayUrl: 'https://bad.test',
+      hermesGatewayToken: 'token',
+    } as any);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fetchSpy.mockResolvedValue({ ok: false, status: 500, statusText: 'bad' });
+    mockValidateWebhookUrl.mockReturnValue({ valid: true });
+    await mod.fireSquadWebhook(msg, {
+      enabled: true,
+      notifyOnHuman: true,
+      notifyOnAgent: true,
+      mode: 'generic',
+      url: 'https://example.test/hook',
+    } as any);
+    expect(mockValidateWebhookUrl).toHaveBeenCalledWith('https://example.test/hook');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed for legacy mode names and blocked legacy webhook URLs', async () => {
     const mod = await import('../services/squad-webhook-service.js');
     const msg = {
       id: 'm1',
@@ -129,27 +168,19 @@ describe('squad webhook service', () => {
       notifyOnHuman: true,
       notifyOnAgent: true,
       mode: 'openclaw',
+      url: 'https://example.test/hook',
     } as any);
-    mockValidateWebhookUrl.mockReturnValue({ valid: false, reason: 'ssrf' });
-    await mod.fireSquadWebhook(msg, {
-      enabled: true,
-      notifyOnHuman: true,
-      notifyOnAgent: true,
-      mode: 'openclaw',
-      openclawGatewayUrl: 'https://bad.test',
-      openclawGatewayToken: 'token',
-    } as any);
-    expect(fetchSpy).not.toHaveBeenCalled();
 
-    fetchSpy.mockResolvedValue({ ok: false, status: 500, statusText: 'bad' });
+    mockValidateWebhookUrl.mockReturnValue({ valid: false, reason: 'legacy runtime endpoint' });
     await mod.fireSquadWebhook(msg, {
       enabled: true,
       notifyOnHuman: true,
       notifyOnAgent: true,
       mode: 'generic',
-      url: 'https://example.test/hook',
+      url: 'http://127.0.0.1:18789/hooks/agent',
     } as any);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('swallows async generic webhook failures but propagates timeout helper behavior through logging path', async () => {

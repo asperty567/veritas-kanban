@@ -94,7 +94,7 @@ export function NotificationsTab() {
       <div className="space-y-4">
         <SectionHeader title="Squad Chat Webhook" />
         <p className="text-sm text-muted-foreground -mt-2">
-          Fire HTTP webhooks or OpenClaw wake calls when squad messages are posted
+          Fire HTTP webhooks or Hermes gateway wake calls when squad messages are posted
         </p>
         <div className="divide-y">
           <ToggleRow
@@ -114,7 +114,7 @@ export function NotificationsTab() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="webhook">Generic Webhook</SelectItem>
-                    <SelectItem value="openclaw">OpenClaw Direct</SelectItem>
+                    <SelectItem value="hermes">HermesAgent API</SelectItem>
                   </SelectContent>
                 </Select>
               </SettingRow>
@@ -148,27 +148,27 @@ export function NotificationsTab() {
                 </>
               )}
 
-              {webhookMode === 'openclaw' && (
+              {webhookMode === 'hermes' && (
                 <>
                   <SettingRow
-                    label="Gateway URL"
-                    description="OpenClaw gateway endpoint (e.g., http://127.0.0.1:18789)"
+                    label="HermesAgent API URL"
+                    description="HermesAgent API-server endpoint (e.g., http://127.0.0.1:8642)"
                   >
                     <Input
-                      value={settings.squadWebhook?.openclawGatewayUrl ?? ''}
-                      onChange={(e) => updateSquadWebhook('openclawGatewayUrl', e.target.value)}
-                      placeholder="http://127.0.0.1:18789"
+                      value={settings.squadWebhook?.hermesGatewayUrl ?? ''}
+                      onChange={(e) => updateSquadWebhook('hermesGatewayUrl', e.target.value)}
+                      placeholder="http://127.0.0.1:8642"
                       className="w-96 h-8 text-xs"
                       type="url"
                     />
                   </SettingRow>
                   <SettingRow
                     label="Gateway Token"
-                    description="OpenClaw gateway authorization token"
+                    description="Hermes gateway authorization token"
                   >
                     <Input
-                      value={settings.squadWebhook?.openclawGatewayToken ?? ''}
-                      onChange={(e) => updateSquadWebhook('openclawGatewayToken', e.target.value)}
+                      value={settings.squadWebhook?.hermesGatewayToken ?? ''}
+                      onChange={(e) => updateSquadWebhook('hermesGatewayToken', e.target.value)}
                       placeholder="your-gateway-token"
                       className="w-96 h-8 text-xs"
                       type="password"

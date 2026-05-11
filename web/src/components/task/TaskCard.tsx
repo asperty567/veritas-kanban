@@ -1,8 +1,9 @@
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { HERMES_AGENT_DISPLAY_NAMES } from '@veritas-kanban/shared';
 import type { Task, TaskPriority, BlockedCategory } from '@veritas-kanban/shared';
 import {
   Check,
@@ -24,6 +25,8 @@ import {
   XCircle,
   Save,
   RotateCcw,
+  Bot,
+  Route,
 } from 'lucide-react';
 import { useBulkActions } from '@/hooks/useBulkActions';
 import { formatDuration } from '@/hooks/useTimeTracking';
@@ -36,12 +39,57 @@ import { type TaskCardMetrics, formatCompactDuration } from '@/hooks/useBulkTask
 import { sanitizeText } from '@/lib/sanitize';
 
 const agentNames: Record<string, string> = {
+  ...HERMES_AGENT_DISPLAY_NAMES,
   'claude-code': 'Claude',
   amp: 'Amp',
   copilot: 'Copilot',
   gemini: 'Gemini',
   veritas: 'Veritas',
+  helm: 'Helm',
 };
+
+function getAgentDisplayName(agent?: string): string {
+  if (!agent) return 'Agent';
+  return agentNames[agent] || agent;
+}
+
+function getAssignedProfiles(task: Task): string[] {
+  if (task.agents && task.agents.length > 0) return task.agents;
+  if (task.agent && task.agent !== 'auto') return [task.agent];
+  return [];
+}
+
+function getRunningProfile(task: Task): string | undefined {
+  if (task.attempt?.status !== 'running') return undefined;
+
+  // The Veritas⇄Hermes bridge may be the coordinator, but the card should show
+  // the concrete Hermes profile doing the work: Aura, Hawk, Midas, Forge, etc.
+  if (task.attempt.agent && task.attempt.agent !== 'veritas') return task.attempt.agent;
+  if (task.claim?.agent && task.claim.agent !== 'veritas') return task.claim.agent;
+  if (task.agent && task.agent !== 'auto' && task.agent !== 'veritas') return task.agent;
+  if (task.agents?.length) return task.agents[0];
+  return task.attempt.agent;
+}
+
+function getActiveTimerStartMs(task: Task): number | null {
+  if (!task.timeTracking?.isRunning) return null;
+  const activeEntryId = task.timeTracking.activeEntryId;
+  const activeEntry = activeEntryId
+    ? task.timeTracking.entries.find((entry) => entry.id === activeEntryId)
+    : task.timeTracking.entries.find((entry) => !entry.endTime);
+  const startedAt = activeEntry?.startTime;
+  if (!startedAt) return null;
+  const startMs = new Date(startedAt).getTime();
+  return Number.isFinite(startMs) ? startMs : null;
+}
+
+function getRunningTimerSeconds(task: Task, nowMs: number): number {
+  const baseSeconds = task.timeTracking?.totalSeconds || 0;
+  const startMs = getActiveTimerStartMs(task);
+  if (startMs === null) return baseSeconds;
+  const activeSeconds = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  return baseSeconds + activeSeconds;
+}
 
 const blockedCategoryInfo: Record<
   BlockedCategory,
@@ -94,10 +142,26 @@ function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolea
     if (pt.type !== nt.type) return false;
     if (pt.project !== nt.project) return false;
     if (pt.sprint !== nt.sprint) return false;
+    if (pt.agent !== nt.agent) return false;
+    if ((pt.agents || []).join('|') !== (nt.agents || []).join('|')) return false;
     if (pt.timeTracking?.totalSeconds !== nt.timeTracking?.totalSeconds) return false;
     if (pt.timeTracking?.isRunning !== nt.timeTracking?.isRunning) return false;
+    if (pt.timeTracking?.activeEntryId !== nt.timeTracking?.activeEntryId) return false;
+    const pActiveStart = pt.timeTracking?.entries.find(
+      (entry) =>
+        entry.id === pt.timeTracking?.activeEntryId ||
+        (!pt.timeTracking?.activeEntryId && !entry.endTime)
+    )?.startTime;
+    const nActiveStart = nt.timeTracking?.entries.find(
+      (entry) =>
+        entry.id === nt.timeTracking?.activeEntryId ||
+        (!nt.timeTracking?.activeEntryId && !entry.endTime)
+    )?.startTime;
+    if (pActiveStart !== nActiveStart) return false;
     if (pt.attempt?.status !== nt.attempt?.status) return false;
     if (pt.attempt?.agent !== nt.attempt?.agent) return false;
+    if (pt.claim?.agent !== nt.claim?.agent) return false;
+    if (pt.claim?.sessionId !== nt.claim?.sessionId) return false;
     if (pt.blockedReason?.category !== nt.blockedReason?.category) return false;
     if (pt.blockedReason?.note !== nt.blockedReason?.note) return false;
     // Subtasks — compare count and completion state
@@ -224,7 +288,20 @@ export const TaskCard = memo(function TaskCard({
     toggleSelect(task.id);
   };
 
-  const isAgentRunning = task.attempt?.status === 'running';
+  const runningProfile = getRunningProfile(task);
+  const isAgentRunning = Boolean(runningProfile);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const activeTimerStartMs = getActiveTimerStartMs(task);
+  const displayedTimeSeconds = getRunningTimerSeconds(task, nowMs);
+  const assignedProfiles = useMemo(() => getAssignedProfiles(task), [task.agent, task.agents]);
+  const isAutoRouting = task.agent === 'auto' || (!task.agent && assignedProfiles.length === 0);
+
+  useEffect(() => {
+    if (!activeTimerStartMs) return;
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [activeTimerStartMs]);
 
   // Memoize type info
   const { typeLabel, TypeIconComponent, typeColor } = useMemo(() => {
@@ -338,18 +415,49 @@ export const TaskCard = memo(function TaskCard({
                   <TooltipTrigger asChild>
                     <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 flex items-center gap-1 animate-pulse">
                       <span className="sr-only">
-                        Agent {agentNames[task.attempt?.agent || ''] || task.attempt?.agent} is
-                        actively running on this task
+                        Agent {getAgentDisplayName(runningProfile)} is actively running on this task
                       </span>
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      {agentNames[task.attempt?.agent || ''] || 'Agent'} running
+                      {getAgentDisplayName(runningProfile)} running
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p className="font-medium">Agent Active</p>
+                    <p className="font-medium">Concrete profile active</p>
                     <p className="text-sm">
-                      {agentNames[task.attempt?.agent || ''] || task.attempt?.agent} is working on
-                      this task
+                      Concrete profile {getAgentDisplayName(runningProfile)} is working on this task
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {!isAgentRunning && assignedProfiles.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1">
+                      <Bot className="h-3 w-3" />
+                      Profile: {assignedProfiles.map(getAgentDisplayName).join(', ')}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Concrete Hermes profile assignment</p>
+                    <p className="text-sm">
+                      Assigned profile{assignedProfiles.length === 1 ? '' : 's'}:{' '}
+                      {assignedProfiles.map(getAgentDisplayName).join(', ')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {!isAgentRunning && isAutoRouting && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400 flex items-center gap-1">
+                      <Route className="h-3 w-3" />
+                      Auto route
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Routing only</p>
+                    <p className="text-sm">
+                      Auto is a routing selection, not proof that a concrete profile is executing.
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -560,7 +668,7 @@ export const TaskCard = memo(function TaskCard({
                   ) : (
                     <Clock className="h-3 w-3" />
                   )}
-                  {formatDuration(task.timeTracking?.totalSeconds || 0)}
+                  {formatDuration(displayedTimeSeconds)}
                 </span>
               )}
               {/* Agent run metrics (for done tasks only) */}

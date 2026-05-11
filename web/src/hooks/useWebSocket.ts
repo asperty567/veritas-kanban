@@ -55,8 +55,6 @@ export interface UseWebSocketReturn {
 const BACKOFF_BASE_MS = 1000;
 /** Maximum backoff delay (ms). */
 const BACKOFF_MAX_MS = 30_000;
-/** If no message received within this time, assume dead and reconnect (ms). */
-const KEEPALIVE_TIMEOUT_MS = 45_000;
 /** Default maximum number of reconnect attempts before giving up. */
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 20;
 
@@ -96,7 +94,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const keepaliveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const mountedRef = useRef(true);
   /** True when user explicitly called disconnect() — suppresses auto-reconnect. */
@@ -126,27 +123,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     }
   }, []);
 
-  const clearKeepaliveTimeout = useCallback(() => {
-    if (keepaliveTimeoutRef.current) {
-      clearTimeout(keepaliveTimeoutRef.current);
-      keepaliveTimeoutRef.current = null;
-    }
-  }, []);
-
-  /**
-   * Reset the keepalive timer. Called on every incoming message (or open).
-   * If no message arrives within KEEPALIVE_TIMEOUT_MS, force-close to trigger reconnect.
-   */
-  const resetKeepaliveTimeout = useCallback(() => {
-    clearKeepaliveTimeout();
-    keepaliveTimeoutRef.current = setTimeout(() => {
-      if (!mountedRef.current) return;
-      // No data received for 45s — assume dead, force reconnect
-      console.warn('[WebSocket] Keepalive timeout — no data in 45s, reconnecting');
-      wsRef.current?.close(4000, 'Keepalive timeout');
-    }, KEEPALIVE_TIMEOUT_MS);
-  }, [clearKeepaliveTimeout]);
-
   // ---- Connect / Reconnect ----
 
   const connect = useCallback(() => {
@@ -173,7 +149,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       reconnectAttemptsRef.current = 0;
       setReconnectAttempt(0);
       onConnectedRef.current?.();
-      resetKeepaliveTimeout();
 
       // Send subscription message if provided
       if (onOpenRef.current) {
@@ -183,8 +158,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
     ws.onmessage = (event) => {
       if (!mountedRef.current) return;
-      // Reset keepalive on every received message
-      resetKeepaliveTimeout();
       try {
         const message = JSON.parse(event.data) as WebSocketMessage;
         setLastMessage(message);
@@ -196,7 +169,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
     ws.onclose = () => {
       if (!mountedRef.current) return;
-      clearKeepaliveTimeout();
       wsRef.current = null;
       onDisconnectedRef.current?.();
 
@@ -232,25 +204,17 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       onErrorRef.current?.(error);
       // onclose will fire after onerror — reconnect logic lives there
     };
-  }, [
-    url,
-    autoReconnect,
-    maxReconnectAttempts,
-    clearReconnectTimeout,
-    clearKeepaliveTimeout,
-    resetKeepaliveTimeout,
-  ]);
+  }, [url, autoReconnect, maxReconnectAttempts, clearReconnectTimeout]);
 
   const disconnect = useCallback(() => {
     intentionalDisconnectRef.current = true;
     clearReconnectTimeout();
-    clearKeepaliveTimeout();
     reconnectAttemptsRef.current = 0;
     setReconnectAttempt(0);
     wsRef.current?.close(1000, 'Client disconnect');
     wsRef.current = null;
     setConnectionState('disconnected');
-  }, [clearReconnectTimeout, clearKeepaliveTimeout]);
+  }, [clearReconnectTimeout]);
 
   const send = useCallback((message: WebSocketMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -269,11 +233,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     return () => {
       mountedRef.current = false;
       clearReconnectTimeout();
-      clearKeepaliveTimeout();
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [autoConnect, connect, clearReconnectTimeout, clearKeepaliveTimeout]);
+  }, [autoConnect, connect, clearReconnectTimeout]);
 
   return {
     isConnected: connectionState === 'connected',

@@ -10,20 +10,23 @@ import express from 'express';
 
 // ── Mock dependencies before importing route ─────────────────────────────────
 
-const { mockChatService, mockSendGatewayChat, mockBuildContext } = vi.hoisted(() => ({
-  mockChatService: {
-    getSession: vi.fn(),
-    getSessionForTask: vi.fn(),
-    listSessions: vi.fn(),
-    createSession: vi.fn(),
-    addMessage: vi.fn(),
-    deleteSession: vi.fn(),
-    sendSquadMessage: vi.fn(),
-    getSquadMessages: vi.fn(),
-  },
-  mockSendGatewayChat: vi.fn().mockResolvedValue(undefined),
-  mockBuildContext: vi.fn(),
-}));
+const { mockChatService, mockSendGatewayChat, mockSendGatewayRun, mockBuildContext } = vi.hoisted(
+  () => ({
+    mockChatService: {
+      getSession: vi.fn(),
+      getSessionForTask: vi.fn(),
+      listSessions: vi.fn(),
+      createSession: vi.fn(),
+      addMessage: vi.fn(),
+      deleteSession: vi.fn(),
+      sendSquadMessage: vi.fn(),
+      getSquadMessages: vi.fn(),
+    },
+    mockSendGatewayChat: vi.fn().mockResolvedValue(undefined),
+    mockSendGatewayRun: vi.fn().mockResolvedValue({ runId: 'run_test_1', status: 'queued' }),
+    mockBuildContext: vi.fn(),
+  })
+);
 
 vi.mock('../../services/chat-service.js', () => ({
   getChatService: () => mockChatService,
@@ -31,6 +34,7 @@ vi.mock('../../services/chat-service.js', () => ({
 
 vi.mock('../../services/gateway-chat-client.js', () => ({
   sendGatewayChat: mockSendGatewayChat,
+  sendGatewayRun: mockSendGatewayRun,
   loadGatewayToken: vi.fn().mockResolvedValue('token'),
 }));
 
@@ -197,7 +201,7 @@ describe('Chat Routes', () => {
       expect(res.status).toBe(200);
     });
 
-    it('injects retrieval context for VERITAS gateway messages', async () => {
+    it('starts a Hermes API run with retrieval context for VERITAS gateway messages', async () => {
       mockBuildContext.mockResolvedValue({
         contextBlock: '<veritas_context>\nRelevant task\n</veritas_context>',
         results: [],
@@ -207,29 +211,38 @@ describe('Chat Routes', () => {
       const res = await request(app).post('/send').send({ message: 'what overlaps?' });
 
       expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        sessionId: 'sess_1',
+        messageId: 'msg_1',
+        runId: 'run_test_1',
+        runStatus: 'queued',
+      });
       expect(mockBuildContext).toHaveBeenCalledWith({
         message: 'what overlaps?',
         taskId: undefined,
       });
-      expect(mockSendGatewayChat).toHaveBeenCalledWith(
+      expect(mockSendGatewayRun).toHaveBeenCalledWith(
         'what overlaps?\n\n<veritas_context>\nRelevant task\n</veritas_context>',
         'kanban-chat-sess_1',
-        expect.any(Object)
+        expect.stringContaining('Veritas Kanban')
       );
+      expect(mockSendGatewayChat).not.toHaveBeenCalled();
     });
 
-    it('skips retrieval context when requested', async () => {
+    it('starts a Hermes API run without retrieval context when requested', async () => {
       const res = await request(app)
         .post('/send')
         .send({ message: 'plain chat', includeContext: false });
 
       expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ runId: 'run_test_1', runStatus: 'queued' });
       expect(mockBuildContext).not.toHaveBeenCalled();
-      expect(mockSendGatewayChat).toHaveBeenCalledWith(
+      expect(mockSendGatewayRun).toHaveBeenCalledWith(
         'plain chat',
         'kanban-chat-sess_1',
-        expect.any(Object)
+        expect.stringContaining('Veritas Kanban')
       );
+      expect(mockSendGatewayChat).not.toHaveBeenCalled();
     });
 
     it('accepts optional taskId and sessionId', async () => {

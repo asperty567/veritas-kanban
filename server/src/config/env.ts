@@ -44,7 +44,7 @@ const booleanString = z
     return val === 'true';
   });
 
-export const envSchema = z.object({
+const baseEnvSchema = z.object({
   // ── Server ──────────────────────────────────────────────────────────
   /** HTTP port the server listens on */
   PORT: portSchema.default(3001),
@@ -109,9 +109,14 @@ export const envSchema = z.object({
   TELEMETRY_COMPRESS_DAYS: positiveIntString,
 
   // ── External Services ───────────────────────────────────────────────
-  /** Clawdbot gateway URL */
-  CLAWDBOT_GATEWAY: z.string().url().optional().default('http://127.0.0.1:18789'),
+  /** Hermes API server URL used for runtime runs. */
+  HERMES_GATEWAY: z.string().url().optional(),
 });
+
+export const envSchema = baseEnvSchema.transform((env) => ({
+  ...env,
+  HERMES_GATEWAY: env.HERMES_GATEWAY ?? 'http://127.0.0.1:8642',
+}));
 
 // ---------------------------------------------------------------------------
 // Types
@@ -165,7 +170,7 @@ export function validateEnv(): Env {
   _env = result.data;
 
   // Log which env vars are configured (names only, never values)
-  const configuredVars = Object.keys(envSchema.shape)
+  const configuredVars = Object.keys(baseEnvSchema.shape)
     .filter((key) => process.env[key] !== undefined && process.env[key] !== '')
     .sort();
 

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { api } from '../utils/api.js';
+import { api, createApiClient } from '../utils/api.js';
 import { findTask } from '../utils/find.js';
 import type { Task } from '../utils/types.js';
 
@@ -79,63 +79,50 @@ export function registerAgentCommands(program: Command): void {
       }
     });
 
-  // Get pending agent requests (for Veritas to process)
+  // Legacy pending/request-file dispatcher retired. Veritas runnable/claim APIs are the only queue.
   program
     .command('agents:pending')
-    .description('List pending agent requests waiting for Clawdbot to process')
+    .description('Retired: request-file pending queue is disabled')
     .option('--json', 'Output as JSON')
-    .action(async (options) => {
-      try {
-        const pending = await api<
-          {
-            taskId: string;
-            attemptId: string;
-            prompt: string;
-            requestedAt: string;
-            callbackUrl: string;
-          }[]
-        >('/api/agents/pending');
-
-        if (options.json) {
-          console.log(JSON.stringify(pending, null, 2));
-        } else if (pending.length === 0) {
-          console.log(chalk.dim('No pending agent requests'));
-        } else {
-          console.log(chalk.bold(`\n🤖 ${pending.length} Pending Agent Request(s)\n`));
-
-          pending.forEach(
-            (req: {
-              taskId: string;
-              attemptId: string;
-              prompt: string;
-              requestedAt: string;
-              callbackUrl: string;
-            }) => {
-              console.log(chalk.cyan(`Task: ${req.taskId}`));
-              console.log(chalk.dim(`  Attempt: ${req.attemptId}`));
-              console.log(chalk.dim(`  Requested: ${new Date(req.requestedAt).toLocaleString()}`));
-              console.log(chalk.dim(`  Callback: ${req.callbackUrl}`));
-              console.log();
-
-              // Print first few lines of prompt
-              const promptLines = req.prompt.split('\n').slice(0, 10);
-              console.log(chalk.dim('─'.repeat(50)));
-              promptLines.forEach((line: string) => console.log(chalk.dim(`  ${line}`)));
-              if (req.prompt.split('\n').length > 10) {
-                console.log(chalk.dim('  ...'));
-              }
-              console.log(chalk.dim('─'.repeat(50)));
-              console.log();
-            }
-          );
-        }
-      } catch (err) {
-        console.error(chalk.red(`Error: ${(err as Error).message}`));
-        process.exit(1);
+    .action((options) => {
+      const payload = {
+        ok: false,
+        retired: true,
+        sourceOfTruth: 'veritas-runnable-claim',
+        controlPlane: 'hermes-agent',
+        error:
+          'agents:pending is retired. Use Veritas runnable/claim APIs and HermesAgent /v1/runs; do not poll /api/agents/pending.',
+      };
+      if (options.json) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.error(chalk.red(payload.error));
       }
+      process.exitCode = 1;
     });
 
-  // Complete an agent request (called by Clawdbot after sub-agent finishes)
+  program
+    .command('agents:dispatch')
+    .description('Retired: CLI request-file dispatcher is disabled')
+    .option('--json', 'Output as JSON')
+    .action((options) => {
+      const payload = {
+        ok: false,
+        retired: true,
+        sourceOfTruth: 'veritas-runnable-claim',
+        controlPlane: 'hermes-agent',
+        error:
+          'agents:dispatch is retired. Dispatch must claim runnable Veritas tasks and start HermesAgent /v1/runs; local files/automation queues are disabled.',
+      };
+      if (options.json) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.error(chalk.red(payload.error));
+      }
+      process.exitCode = 1;
+    });
+
+  // Complete an agent request (called by Hermes after sub-agent finishes)
   program
     .command('agents:complete <taskId>')
     .description('Mark an agent request as complete')

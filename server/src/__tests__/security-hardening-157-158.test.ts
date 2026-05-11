@@ -30,11 +30,13 @@ describe('Security Hardening (#157 #158)', () => {
 
     service = new TaskService({ tasksDir, archiveDir });
 
-    // Register a valid agent for testing
+    // Register a valid canonical HermesAgent profile for testing. Task assignment
+    // validation intentionally rejects stale/non-Hermes registry labels even when
+    // they are present in the registry.
     const registry = getAgentRegistryService();
     registry.register({
-      id: 'test-agent',
-      name: 'Test Agent',
+      id: 'hawk',
+      name: 'Hawk',
       capabilities: [{ name: 'code' }],
     });
   });
@@ -45,19 +47,19 @@ describe('Security Hardening (#157 #158)', () => {
     // before removing the temp directory (prevents unhandled rejection on CI).
     await new Promise((r) => setTimeout(r, 50));
     const registry = getAgentRegistryService();
-    registry.deregister('test-agent');
+    registry.deregister('hawk');
     await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
   });
 
   // ─── #157: Validate task.agent against registry ───
 
   describe('#157 - agent ref validation on create/update', () => {
-    it('should accept a valid registered agent ref on create', async () => {
+    it('should accept a valid canonical HermesAgent ref on create', async () => {
       const task = await service.createTask({
         title: 'Valid agent task',
-        agent: 'test-agent',
+        agent: 'hawk',
       } as any);
-      expect(task.agent).toBe('test-agent');
+      expect(task.agent).toBe('hawk');
     });
 
     it('should reject an unknown agent ref on create', async () => {
@@ -66,7 +68,7 @@ describe('Security Hardening (#157 #158)', () => {
           title: 'Bad agent task',
           agent: 'nonexistent-agent',
         } as any)
-      ).rejects.toThrow(/not found in registry/);
+      ).rejects.toThrow(/Unknown HermesAgent profile/);
     });
 
     it('should reject a malformed agent ref on create', async () => {
@@ -86,14 +88,14 @@ describe('Security Hardening (#157 #158)', () => {
     it('should reject unknown agent ref on update', async () => {
       const task = await service.createTask({ title: 'Update test' });
       await expect(service.updateTask(task.id, { agent: 'fake-agent' } as any)).rejects.toThrow(
-        /not found in registry/
+        /Unknown HermesAgent profile/
       );
     });
 
     it('should accept valid agent ref on update', async () => {
       const task = await service.createTask({ title: 'Update test valid' });
-      const updated = await service.updateTask(task.id, { agent: 'test-agent' } as any);
-      expect(updated?.agent).toBe('test-agent');
+      const updated = await service.updateTask(task.id, { agent: 'hawk' } as any);
+      expect(updated?.agent).toBe('hawk');
     });
   });
 
@@ -130,7 +132,7 @@ describe('Security Hardening (#157 #158)', () => {
       expect(() =>
         registry.syncFromTask(
           {
-            agentRef: 'test-agent',
+            agentRef: 'hawk',
             taskId: 'task_20250101_abc123',
             taskStatus: 'in-progress',
           },
@@ -145,7 +147,7 @@ describe('Security Hardening (#157 #158)', () => {
 
       const result = registry.syncFromTask(
         {
-          agentRef: 'test-agent',
+          agentRef: 'hawk',
           taskId: 'task_20250101_abc123',
           taskStatus: 'in-progress',
         },

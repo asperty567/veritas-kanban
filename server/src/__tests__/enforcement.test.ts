@@ -2,10 +2,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { execFile as execFileCallback } from 'child_process';
+import { promisify } from 'util';
 import { TaskService } from '../services/task-service.js';
 import { ConfigService } from '../services/config-service.js';
 import { DEFAULT_FEATURE_SETTINGS } from '@veritas-kanban/shared';
 import { reviewScoresSchema } from '../routes/tasks.js';
+
+const execFile = promisify(execFileCallback);
+const legacyGatewayKey = ['CLAWDBOT', 'GATEWAY'].join('_');
+const DISCIPLINE_ENV_KEYS = [
+  legacyGatewayKey,
+  'HERMES_API_SERVER_URL',
+  'HERMES_GATEWAY_URL',
+] as const;
 
 function buildSettings(overrides: Partial<typeof DEFAULT_FEATURE_SETTINGS> = {}) {
   return {
@@ -18,13 +28,48 @@ function buildSettings(overrides: Partial<typeof DEFAULT_FEATURE_SETTINGS> = {})
   } as typeof DEFAULT_FEATURE_SETTINGS;
 }
 
+async function git(cwd: string, args: string[]) {
+  await execFile('git', args, { cwd });
+}
+
+async function createCommittedGitRepo(root: string): Promise<string> {
+  const repoPath = path.join(root, 'repo');
+  await fs.mkdir(repoPath, { recursive: true });
+  await git(repoPath, ['init']);
+  await git(repoPath, ['config', 'user.email', 'veritas-test@example.invalid']);
+  await git(repoPath, ['config', 'user.name', 'Veritas Test']);
+  await fs.writeFile(path.join(repoPath, 'README.md'), '# test\n', 'utf-8');
+  await git(repoPath, ['add', 'README.md']);
+  await git(repoPath, ['commit', '-m', 'initial commit']);
+  return repoPath;
+}
+
+function restoreEnvSnapshot(snapshot: Record<string, string | undefined>) {
+  for (const key of DISCIPLINE_ENV_KEYS) {
+    const original = snapshot[key];
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  }
+}
+
 describe('Enforcement gates', () => {
   let service: TaskService;
   let testRoot: string;
   let tasksDir: string;
   let archiveDir: string;
+  let envSnapshot: Record<string, string | undefined>;
 
   beforeEach(async () => {
+    envSnapshot = Object.fromEntries(
+      DISCIPLINE_ENV_KEYS.map((key) => [key, process.env[key]])
+    ) as Record<string, string | undefined>;
+    for (const key of DISCIPLINE_ENV_KEYS) {
+      delete process.env[key];
+    }
+
     const uniqueSuffix = Math.random().toString(36).substring(7);
     testRoot = path.join(os.tmpdir(), `veritas-test-enforcement-${uniqueSuffix}`);
     tasksDir = path.join(testRoot, 'active');
@@ -37,6 +82,7 @@ describe('Enforcement gates', () => {
   afterEach(async () => {
     service?.dispose();
     vi.restoreAllMocks();
+    restoreEnvSnapshot(envSnapshot);
     if (testRoot) {
       await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
     }
@@ -202,6 +248,38 @@ describe('Enforcement gates', () => {
     await service.updateTask(task.id, { status: 'in-progress' });
 
     expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks code task completion when the task git worktree has uncommitted changes', async () => {
+    vi.spyOn(ConfigService.prototype, 'getFeatureSettings').mockResolvedValue(
+      buildSettings({ enforcement: { reviewGate: false, closingComments: false } }) as any
+    );
+    service = new TaskService({ tasksDir, archiveDir });
+
+    const repoPath = await createCommittedGitRepo(testRoot);
+    await fs.writeFile(path.join(repoPath, 'README.md'), '# changed\n', 'utf-8');
+
+    const task = await service.createTask({ title: 'Dirty worktree task', type: 'code' });
+    await service.updateTask(task.id, {
+      git: { repo: repoPath, branch: 'feature/test', baseBranch: 'main', worktreePath: repoPath },
+    });
+
+    await expect(service.updateTask(task.id, { status: 'done' })).rejects.toThrow(
+      /Git Discipline Gate.*dirty worktree/
+    );
+  });
+
+  it('ignores legacy gateway env aliases so they cannot become runtime authority', async () => {
+    vi.spyOn(ConfigService.prototype, 'getFeatureSettings').mockResolvedValue(
+      buildSettings({ enforcement: { reviewGate: false, closingComments: false } }) as any
+    );
+    process.env[legacyGatewayKey] = 'http://127.0.0.1:9';
+    service = new TaskService({ tasksDir, archiveDir });
+
+    const task = await service.createTask({ title: 'Legacy runtime alias ignored' });
+    const updated = await service.updateTask(task.id, { status: 'done' });
+
+    expect(updated.status).toBe('done');
   });
 
   it('validates reviewScores length and range', () => {
