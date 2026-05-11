@@ -41,7 +41,6 @@ export const STALE_HISTORICAL_AGENT_LABELS = [
   'scout',
   'dan',
   'link',
-  'sage',
   'marshal',
 ] as const;
 
