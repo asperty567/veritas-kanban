@@ -1,7 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+
+const healthyRepoHygieneState = {
+  scannedAt: '2026-01-26T12:00:00.000Z',
+  summary: {
+    healthy: true,
+    blockingRepos: 0,
+    warningRepos: 0,
+    totalRepos: 0,
+  },
+  repos: [],
+};
+
+const mockRepoHygieneService = vi.hoisted(() => ({
+  scanAll: vi.fn(),
+  getBlockingReposForDone: vi.fn(),
+}));
+
+vi.mock('../services/repo-hygiene-service.js', () => ({
+  getRepoHygieneService: () => mockRepoHygieneService,
+}));
+
 import { TaskService } from '../services/task-service.js';
 
 describe('TaskService', () => {
@@ -11,6 +32,10 @@ describe('TaskService', () => {
   let archiveDir: string;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    mockRepoHygieneService.scanAll.mockResolvedValue(healthyRepoHygieneState);
+    mockRepoHygieneService.getBlockingReposForDone.mockReturnValue([]);
+
     // Create fresh test directories with unique suffix
     const uniqueSuffix = Math.random().toString(36).substring(7);
     testRoot = path.join(os.tmpdir(), `veritas-test-tasks-${uniqueSuffix}`);
@@ -289,6 +314,74 @@ updated: '2026-01-26T10:00:00.000Z'
       expect(updated?.attempt?.status).toBe('complete');
       expect(updated?.attempt?.ended).toBeDefined();
       expect(updated?.claim).toBeUndefined();
+    });
+
+    it('should block marking done when repo hygiene has blocking repos', async () => {
+      const task = await service.createTask({ title: 'Repo Hygiene Blocked Task' });
+      const blockingRepo = {
+        repoName: 'mission-control',
+        path: '/tmp/mission-control',
+        branch: 'feature/dirty',
+        expectedBranch: 'main',
+        dirty: true,
+        untrackedCount: 1,
+        modifiedCount: 2,
+        ahead: 0,
+        behind: 0,
+        detachedHead: false,
+        hasUpstream: true,
+        healthy: false,
+        blocking: true,
+        scannedAt: '2026-01-26T12:00:00.000Z',
+        issues: [
+          {
+            code: 'DIRTY_WORKTREE',
+            severity: 'blocking',
+            message: 'mission-control has dirty files',
+          },
+        ],
+      };
+      const unhealthyState = {
+        scannedAt: '2026-01-26T12:00:00.000Z',
+        summary: {
+          healthy: false,
+          blockingRepos: 1,
+          warningRepos: 0,
+          totalRepos: 1,
+        },
+        repos: [blockingRepo],
+      };
+
+      mockRepoHygieneService.scanAll.mockResolvedValue(unhealthyState);
+      mockRepoHygieneService.getBlockingReposForDone.mockReturnValue([blockingRepo]);
+
+      await expect(
+        service.updateTask(task.id, {
+          status: 'done',
+          deliverables: [
+            {
+              id: 'deliverable-1',
+              title: 'Completion evidence',
+              type: 'report',
+              status: 'accepted',
+              created: '2026-01-26T12:00:00.000Z',
+            },
+          ],
+          reviewScores: [10, 10, 10, 10],
+          reviewComments: [
+            {
+              id: 'review-1',
+              file: 'task-service',
+              line: 1,
+              content: 'Completion evidence accepted for task finalization regression.',
+              created: '2026-01-26T12:00:00.000Z',
+            },
+          ],
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'REPO_HYGIENE_GATE',
+      });
     });
   });
 

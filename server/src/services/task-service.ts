@@ -21,7 +21,12 @@ import { getTelemetryService, type TelemetryService } from './telemetry-service.
 import { ConfigService } from './config-service.js';
 import { withFileLock } from './file-lock.js';
 import { createLogger } from '../lib/logger.js';
-import { ConflictError, NotFoundError, ValidationError } from '../middleware/error-handler.js';
+import {
+  AppError,
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from '../middleware/error-handler.js';
 import { fireHook, getHookEventForStatusChange } from './hook-service.js';
 import {
   validateTransition,
@@ -34,12 +39,14 @@ import {
   type TaskSyncContext,
 } from './agent-registry-service.js';
 import { getTasksActiveDir, getTasksArchiveDir } from '../utils/paths.js';
+import { getRepoHygieneService } from './repo-hygiene-service.js';
 
 const log = createLogger('task-cache');
 const TASK_SYNC_CONTEXT: TaskSyncContext = createTaskSyncToken('task-service');
 const TASK_RECONCILE_CONTEXT: TaskSyncContext = createTaskSyncToken('task-reconciler');
 const execFileAsync = promisify(execFileCallback);
 const GIT_DISCIPLINE_CODE = 'GIT_DISCIPLINE_GATE';
+const REPO_HYGIENE_CODE = 'REPO_HYGIENE_GATE';
 
 /**
  * Task ID format validation
@@ -129,6 +136,38 @@ async function assertCompletionDiscipline(task: Task): Promise<void> {
       },
     ]);
   }
+}
+
+async function assertRepoHygieneCompletionGate(): Promise<void> {
+  const repoHygieneService = getRepoHygieneService();
+  const state = await repoHygieneService.scanAll();
+  const blockingRepos = repoHygieneService.getBlockingReposForDone(state);
+  if (blockingRepos.length === 0) return;
+
+  const issueSummary = blockingRepos
+    .map((repo) => {
+      const issues = repo.issues
+        .filter((issue) => issue.severity === 'blocking')
+        .map((issue) => issue.code)
+        .join(', ');
+      return `${repo.repoName}: ${issues}`;
+    })
+    .join('; ');
+  const message = `Repo Hygiene Gate: ${blockingRepos.length} critical repo(s) block task completion. Fix repo hygiene before marking Done. ${issueSummary}`;
+
+  throw new AppError(422, message, REPO_HYGIENE_CODE, {
+    code: REPO_HYGIENE_CODE,
+    message,
+    path: ['status'],
+    summary: state.summary,
+    repos: blockingRepos.map((repo) => ({
+      repoName: repo.repoName,
+      path: repo.path,
+      branch: repo.branch,
+      expectedBranch: repo.expectedBranch,
+      issues: repo.issues.filter((issue) => issue.severity === 'blocking'),
+    })),
+  });
 }
 
 // Default paths are resolved via the shared paths utility so Docker, tests,
@@ -936,6 +975,7 @@ export class TaskService {
         // Check requireDeliverableForDone setting
         if (input.status === 'done') {
           await assertCompletionDiscipline(completionPreviewTask);
+          await assertRepoHygieneCompletionGate();
 
           if (settings.tasks.requireDeliverableForDone) {
             const deliverables = input.deliverables ?? freshTask.deliverables ?? [];
