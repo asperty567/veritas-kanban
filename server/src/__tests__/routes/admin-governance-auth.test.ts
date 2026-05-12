@@ -45,7 +45,7 @@ const {
 
 vi.mock('../../config/security.js', () => ({
   getSecurityConfig: vi.fn(() => ({
-    authEnabled: false,
+    authEnabled: true,
     passwordHash: null,
     jwtSecret: 'test-secret-key',
   })),

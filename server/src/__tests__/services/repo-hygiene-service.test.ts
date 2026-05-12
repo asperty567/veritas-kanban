@@ -132,4 +132,29 @@ describe('RepoHygieneService', () => {
     expect(state.summary.blockingRepos).toBe(1);
     expect(state.repos[0].issues.map((issue) => issue.code)).toContain('PATH_MISSING');
   });
+
+  it('blocks active local work on protected branches unless explicitly allowed', async () => {
+    const repoDir = await createCleanRepo(tempDir);
+    await fs.writeFile(path.join(repoDir, 'local-change.txt'), 'local commit\n', 'utf-8');
+    await git(repoDir, ['add', 'local-change.txt']);
+    await git(repoDir, ['commit', '-m', 'local protected branch work']);
+    await saveConfig({
+      repos: [{ name: 'protected-repo', path: repoDir, defaultBranch: 'main' }],
+      agents: [],
+      defaultAgent: 'claude-code',
+    });
+
+    const state = await service.scanAll();
+
+    expect(state.summary.blockingRepos).toBe(1);
+    expect(state.repos[0]).toMatchObject({
+      branch: 'main',
+      protectedBranch: true,
+      ahead: 1,
+      blocking: true,
+    });
+    expect(state.repos[0].issues.map((issue) => issue.code)).toContain(
+      'PROTECTED_BRANCH_ACTIVE_WORK'
+    );
+  });
 });
