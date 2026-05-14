@@ -33,11 +33,15 @@ export interface SystemSignal {
   memory: boolean;
 }
 
-/** Agent registry signal */
+/** Agent registry signal. `offline` is retained for API compatibility but, for
+ * Hermes runtime roster responses, represents off-shift profiles rather than
+ * failed active agents. */
 export interface AgentSignal {
   status: 'ok' | 'warn' | 'critical';
   total: number;
+  /** Active profiles: online, busy, or idle. */
   online: number;
+  /** Off-shift profiles in the canonical roster. */
   offline: number;
 }
 

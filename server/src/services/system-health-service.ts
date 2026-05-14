@@ -69,9 +69,9 @@ function buildAgentSignal(): AgentSignal {
   try {
     const registry = getAgentRegistryService();
     // Dashboard health should reflect the canonical Hermes runtime roster, not
-    // the historical/raw registry. The raw registry can contain retired labels
-    // and stale heartbeat-only rows, which caused the status bar to show
-    // "11 offline" even while the live Hermes runtime had active agents.
+    // the historical/raw registry. In runtimeList(), `offline` means an
+    // intentionally off-shift profile, not a failed heartbeat. Only zero active
+    // profiles is unhealthy.
     const agents = registry.runtimeList();
     const total = agents.length;
     const online = agents.filter(
@@ -79,16 +79,7 @@ function buildAgentSignal(): AgentSignal {
     ).length;
     const offline = total - online;
 
-    let status: 'ok' | 'warn' | 'critical';
-    if (total === 0) {
-      status = 'ok';
-    } else if (offline === total) {
-      status = 'critical';
-    } else if (offline > 0) {
-      status = 'warn';
-    } else {
-      status = 'ok';
-    }
+    const status: 'ok' | 'warn' | 'critical' = total > 0 && online === 0 ? 'critical' : 'ok';
 
     return { status, total, online, offline };
   } catch (err) {
@@ -129,7 +120,7 @@ async function buildOperationsSignal(): Promise<OperationsSignal> {
  *
  *   stable    = all signals ok
  *   reviewing = 1 warning signal
- *   drifting  = 2+ warnings or any agent offline
+ *   drifting  = 2+ warning signals
  *   elevated  = any critical signal
  *   alert     = system fail or successRate < 50%
  */
@@ -145,7 +136,7 @@ function determineLevel(
     (s) => s === 'warn'
   ).length;
 
-  if (warnings >= 2 || agents.offline > 0) return 'drifting';
+  if (warnings >= 2) return 'drifting';
   if (warnings === 1) return 'reviewing';
   return 'stable';
 }
