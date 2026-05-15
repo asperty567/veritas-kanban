@@ -79,6 +79,18 @@ function resolveDiscordWebhookUrl(): string {
   ).trim();
 }
 
+function resolveDiscordBotToken(): string {
+  return (process.env.DISCORD_BOT_TOKEN || readEnvFromFiles('DISCORD_BOT_TOKEN') || '').trim();
+}
+
+function resolveDiscordChannelId(): string {
+  return (
+    process.env.DISCORD_HOME_CHANNEL ||
+    readEnvFromFiles('DISCORD_HOME_CHANNEL') ||
+    ''
+  ).trim();
+}
+
 function truncate(value: string, max = 1200): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
 }
@@ -170,27 +182,52 @@ async function sendTelegramAlert(message: string): Promise<void> {
 }
 
 async function sendDiscordAlert(message: string): Promise<void> {
+  const payload = {
+    content: truncate(message, 1900),
+    allowed_mentions: { parse: [] },
+  };
   const webhookUrl = resolveDiscordWebhookUrl();
-  if (!webhookUrl) {
+  if (webhookUrl) {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(
+        `Discord blocked alert failed: HTTP ${response.status} ${body.slice(0, 300)}`
+      );
+    }
+    return;
+  }
+
+  const botToken = resolveDiscordBotToken();
+  const channelId = resolveDiscordChannelId();
+  if (!botToken || !channelId) {
     log.warn(
-      'Discord webhook not configured; blocked alert kept on Telegram and Veritas notifications'
+      'Discord webhook/bot channel not configured; blocked alert kept on Telegram and Veritas notifications'
     );
     return;
   }
 
-  const response = await fetch(webhookUrl, {
+  const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      content: truncate(message, 1900),
-      allowed_mentions: { parse: [] },
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bot ${botToken}`,
+    },
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Discord blocked alert failed: HTTP ${response.status} ${body.slice(0, 300)}`);
+    throw new Error(
+      `Discord bot blocked alert failed: HTTP ${response.status} ${body.slice(0, 300)}`
+    );
   }
 }
 

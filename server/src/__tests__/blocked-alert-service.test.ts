@@ -26,6 +26,9 @@ describe('blocked task alerts', () => {
     expect(source).toContain('https://api.telegram.org/bot${token}/sendMessage');
     expect(source).toContain('DISCORD_BLOCKED_ALERT_WEBHOOK_URL');
     expect(source).toContain('DISCORD_WEBHOOK_URL');
+    expect(source).toContain('DISCORD_BOT_TOKEN');
+    expect(source).toContain('DISCORD_HOME_CHANNEL');
+    expect(source).toContain('https://discord.com/api/v10/channels/${channelId}/messages');
     expect(source).toContain('allowed_mentions');
     expect(source).toContain('TELEGRAM_BOT_TOKEN_HAWK');
     expect(source).toContain('/Users/admin/.hermes/profiles/hawk/.env');
