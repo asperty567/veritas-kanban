@@ -6,6 +6,7 @@ import { getNotificationService } from './notification-service.js';
 const log = createLogger('blocked-alerts');
 const DEFAULT_ANDY_CHAT_ID = '8601358413';
 const BLOCKED_ALERT_LOCK_TTL_MS = 5 * 60_000;
+const APPROVAL_BLOCKED_CATEGORIES = new Set(['waiting-on-feedback', 'prerequisite']);
 
 const ENV_CANDIDATE_PATHS = [
   '/Users/admin/.hermes/profiles/hawk/.env',
@@ -95,6 +96,49 @@ function truncate(value: string, max = 1200): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
 }
 
+function taskShortId(taskId: string): string {
+  return taskId.split('_').filter(Boolean).pop() || taskId;
+}
+
+function blockedCategory(task: Task): string {
+  const reason = task.blockedReason;
+  if (reason && typeof reason === 'object' && 'category' in reason) {
+    const category = String((reason as unknown as Record<string, unknown>).category || '').trim();
+    if (category) return category;
+  }
+  return 'other';
+}
+
+function extractEvidence(task: Task, reasonText: string): string[] {
+  const evidence: string[] = [];
+  const git = task.git;
+  if (git?.repo) evidence.push(`Repo: ${git.repo}`);
+  if (git?.branch) evidence.push(`Branch: ${git.branch}`);
+  if (git?.prUrl) evidence.push(`PR: ${git.prUrl}`);
+
+  const searchable = [
+    reasonText,
+    task.description || '',
+    task.automation?.result || '',
+    ...(task.comments || []).map((comment) => comment.text || ''),
+    ...(task.observations || []).map((observation) => observation.content || ''),
+  ].join('\n');
+  const commit = searchable.match(/\b[0-9a-f]{7,40}\b/i)?.[0];
+  evidence.push(`Commit: ${commit || 'not attached'}`);
+
+  return evidence;
+}
+
+function approvalConsequence(category: string): string {
+  if (category === 'waiting-on-feedback') {
+    return 'Approve = human sign-off to proceed with the requested feedback/deploy/runtime action. Deny = keep blocked and record that the requested action is not approved.';
+  }
+  if (category === 'prerequisite') {
+    return 'Approve = prerequisite is accepted and Hawk may continue the merge/deploy/live-verification path. Deny = keep blocked until prerequisite evidence changes.';
+  }
+  return 'Approve = human sign-off to continue. Deny = keep blocked for follow-up.';
+}
+
 function evictExpiredBlockedAlertLocks(): void {
   const cutoff = Date.now() - BLOCKED_ALERT_LOCK_TTL_MS;
   for (const [taskId, timestamp] of activeBlockedAlerts.entries()) {
@@ -122,7 +166,7 @@ function describeBlockedReason(task: Task): string {
 
   const parts: string[] = [];
   const shaped = reason as unknown as Record<string, unknown>;
-  for (const key of ['category', 'reason', 'message', 'details', 'source']) {
+  for (const key of ['category', 'note', 'reason', 'message', 'details', 'source']) {
     const value = shaped[key];
     if (typeof value === 'string' && value.trim()) {
       parts.push(`${key}: ${value.trim()}`);
@@ -145,24 +189,57 @@ function notificationTargets(task: Task): string[] {
 export function buildBlockedTaskAlertMessage(task: Task, previousStatus: string): string {
   const title = String(task.title || task.id || 'Untitled task');
   const agent = String(task.agent || 'unassigned');
+  const category = blockedCategory(task);
   const reason = truncate(describeBlockedReason(task), 900);
+  const evidence = extractEvidence(task, reason);
+  const shortId = taskShortId(task.id);
 
   return [
-    `🚨 VERITAS BLOCKED: ${title}`,
-    `Task: ${task.id}`,
+    APPROVAL_BLOCKED_CATEGORIES.has(category)
+      ? `🚨 NEEDS YOUR APPROVAL: ${title}`
+      : `🚨 VERITAS BLOCKED: ${title}`,
+    `Task: ${task.id} (${shortId})`,
+    `Blocker type: ${category}`,
     `Agent: ${agent}`,
     `Transition: ${previousStatus} → blocked`,
     '',
+    'Why it needs attention:',
     reason,
+    '',
+    'Evidence:',
+    ...evidence.map((entry) => `- ${entry}`),
+    '',
+    'Approval consequence:',
+    approvalConsequence(category),
+    '',
+    `Buttons: Approve = ea:${shortId}:approve · Deny = ea:${shortId}:deny`,
+    '',
+    'Safety: this alert does not auto-close the blocker or restart/deploy anything. It only records your decision for Hawk to act on.',
   ].join('\n');
 }
 
-async function sendTelegramAlert(message: string): Promise<void> {
+export function buildTelegramApprovalKeyboard(task: Task): Record<string, unknown> | undefined {
+  const category = blockedCategory(task);
+  if (!APPROVAL_BLOCKED_CATEGORIES.has(category)) return undefined;
+  const shortId = taskShortId(task.id);
+  return {
+    inline_keyboard: [
+      [
+        { text: '✅ Approve', callback_data: `ea:${shortId}:approve` },
+        { text: '❌ Deny', callback_data: `ea:${shortId}:deny` },
+      ],
+    ],
+  };
+}
+
+async function sendTelegramAlert(message: string, task: Task): Promise<void> {
   const token = resolveTelegramBotToken();
   if (!token) {
     log.warn('Telegram bot token not configured; blocked alert kept as Veritas notification only');
     return;
   }
+
+  const replyMarkup = buildTelegramApprovalKeyboard(task);
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
@@ -171,6 +248,7 @@ async function sendTelegramAlert(message: string): Promise<void> {
       chat_id: resolveTelegramChatId(),
       text: message,
       disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -246,7 +324,7 @@ export async function alertTaskBlocked(task: Task, previousStatus: string): Prom
     });
 
     try {
-      await sendTelegramAlert(message);
+      await sendTelegramAlert(message, task);
     } catch (err) {
       log.warn({ taskId: task.id, err }, 'Telegram blocked alert delivery failed');
     }
