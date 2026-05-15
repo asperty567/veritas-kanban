@@ -35,6 +35,7 @@ import {
   type TaskSyncContext,
 } from './agent-registry-service.js';
 import { getTasksActiveDir, getTasksArchiveDir } from '../utils/paths.js';
+import { getAutomationService, type BlockedIntakeResolution } from './automation-service.js';
 
 const log = createLogger('task-cache');
 const TASK_SYNC_CONTEXT: TaskSyncContext = createTaskSyncToken('task-service');
@@ -166,6 +167,16 @@ export interface ClaimRunnableTaskResult {
   reason?: string;
 }
 
+export interface BlockedIntakePollResult {
+  checked: number;
+  requeued: string[];
+  annotated: string[];
+  judgmentBlocked: string[];
+  ignored: string[];
+  resolutions: BlockedIntakeResolution[];
+  running?: boolean;
+}
+
 /** Ignore file-watcher events within this window after our own writes */
 const WRITE_DEBOUNCE_MS = 200;
 
@@ -183,6 +194,7 @@ export class TaskService {
   private cacheStats = { hits: 0, misses: 0 };
   private taskSyncReconcileInterval: ReturnType<typeof setInterval> | null = null;
   private reconcileRunning = false;
+  private blockedIntakePollRunning = false;
 
   constructor(options: TaskServiceOptions = {}) {
     this.tasksDir = options.tasksDir || DEFAULT_TASKS_DIR;
@@ -612,6 +624,89 @@ export class TaskService {
     }
   }
 
+  private async appendHawkProgressOnce(taskId: string, note: string): Promise<void> {
+    if (!note) return;
+    const { getProgressService } = await import('./progress-service.js');
+    const progressService = getProgressService();
+    const existing = await progressService.getProgress(taskId);
+    if (existing?.includes(note)) return;
+    await progressService.appendProgress(taskId, 'Hawk Blocked Intake Poll', note);
+  }
+
+  async pollBlockedIntakeResolutions(): Promise<BlockedIntakePollResult> {
+    if (this.blockedIntakePollRunning) {
+      return {
+        checked: 0,
+        requeued: [],
+        annotated: [],
+        judgmentBlocked: [],
+        ignored: [],
+        resolutions: [],
+        running: true,
+      };
+    }
+
+    this.blockedIntakePollRunning = true;
+    const result: BlockedIntakePollResult = {
+      checked: 0,
+      requeued: [],
+      annotated: [],
+      judgmentBlocked: [],
+      ignored: [],
+      resolutions: [],
+    };
+
+    try {
+      const automation = getAutomationService();
+      const blockedTasks = (await this.listTasks()).filter((task) => task.status === 'blocked');
+      result.checked = blockedTasks.length;
+
+      for (const task of blockedTasks) {
+        const resolution = automation.planBlockedIntakeResolution(task);
+        result.resolutions.push(resolution);
+
+        if (resolution.action === 'ignored') {
+          result.ignored.push(task.id);
+          continue;
+        }
+
+        await this.appendHawkProgressOnce(task.id, resolution.progressNote);
+
+        if (resolution.action === 'judgment-blocked') {
+          result.judgmentBlocked.push(task.id);
+          continue;
+        }
+
+        if (resolution.action === 'annotated') {
+          result.annotated.push(task.id);
+          if (
+            resolution.enrichedDescription &&
+            resolution.enrichedDescription !== task.description
+          ) {
+            await this.updateTask(task.id, { description: resolution.enrichedDescription });
+          }
+          continue;
+        }
+
+        if (resolution.action === 'requeued') {
+          result.requeued.push(task.id);
+          await this.updateTask(task.id, {
+            ...(resolution.enrichedDescription &&
+            resolution.enrichedDescription !== task.description
+              ? { description: resolution.enrichedDescription }
+              : {}),
+            status: 'todo',
+            blockedReason: null,
+          });
+        }
+      }
+
+      return result;
+    } finally {
+      this.blockedIntakePollRunning = false;
+    }
+  }
+
   async listTasks(): Promise<Task[]> {
     await this.initCache();
     return this.cacheList();
@@ -908,6 +1003,7 @@ export class TaskService {
     const filepath = path.join(this.tasksDir, newFilename);
 
     let updatedTask!: Task;
+    let shouldPollBlockedIntake = false;
 
     await withFileLock(filepath, async () => {
       // Re-read from cache inside the lock to get the latest state.
@@ -1140,6 +1236,7 @@ export class TaskService {
         }
 
         if (updatedTask.status === 'blocked' && previousStatus !== 'blocked') {
+          shouldPollBlockedIntake = true;
           alertTaskBlocked(updatedTask, previousStatus).catch((err) => {
             log.warn({ taskId: updatedTask.id }, 'Blocked task alert failed: %s', err);
           });
@@ -1237,6 +1334,12 @@ export class TaskService {
         });
       }
     });
+
+    if (shouldPollBlockedIntake) {
+      this.pollBlockedIntakeResolutions().catch((err) => {
+        log.warn({ err, taskId: updatedTask.id }, 'Blocked intake poll failed');
+      });
+    }
 
     return updatedTask;
   }

@@ -620,6 +620,18 @@ router.post(
   })
 );
 
+// POST /api/tasks/blocked-intake-scan - Poll blocked tasks for mechanical brief-quality resolution
+router.post(
+  '/blocked-intake-scan',
+  asyncHandler(async (_req, res) => {
+    const result = await taskService.pollBlockedIntakeResolutions();
+    if (result.requeued.length > 0 || result.annotated.length > 0) {
+      broadcastTaskChange('updated');
+    }
+    res.json(result);
+  })
+);
+
 /**
  * @openapi
  * /api/tasks/{id}:
