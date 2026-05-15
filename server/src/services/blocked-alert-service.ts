@@ -4,7 +4,6 @@ import { createLogger } from '../lib/logger.js';
 import { getNotificationService } from './notification-service.js';
 
 const log = createLogger('blocked-alerts');
-const DEFAULT_ANDY_CHAT_ID = '8601358413';
 const BLOCKED_ALERT_LOCK_TTL_MS = 5 * 60_000;
 const APPROVAL_BLOCKED_CATEGORIES = new Set(['waiting-on-feedback', 'prerequisite']);
 
@@ -49,11 +48,7 @@ function readEnvFromFiles(key: string): string {
 function resolveTelegramBotToken(): string {
   return (
     process.env.TELEGRAM_BOT_TOKEN_HAWK ||
-    process.env.TELEGRAM_BOT_TOKEN_LINK ||
-    process.env.TELEGRAM_BOT_TOKEN ||
     readEnvFromFiles('TELEGRAM_BOT_TOKEN_HAWK') ||
-    readEnvFromFiles('TELEGRAM_BOT_TOKEN_LINK') ||
-    readEnvFromFiles('TELEGRAM_BOT_TOKEN') ||
     ''
   ).trim();
 }
@@ -61,12 +56,8 @@ function resolveTelegramBotToken(): string {
 function resolveTelegramChatId(): string {
   return (
     process.env.TELEGRAM_CHAT_ID_HAWK ||
-    process.env.TELEGRAM_CHAT_ID_LINK ||
-    process.env.TELEGRAM_CHAT_ID ||
     readEnvFromFiles('TELEGRAM_CHAT_ID_HAWK') ||
-    readEnvFromFiles('TELEGRAM_CHAT_ID_LINK') ||
-    readEnvFromFiles('TELEGRAM_CHAT_ID') ||
-    DEFAULT_ANDY_CHAT_ID
+    ''
   ).trim();
 }
 
@@ -235,7 +226,17 @@ export function buildTelegramApprovalKeyboard(task: Task): Record<string, unknow
 async function sendTelegramAlert(message: string, task: Task): Promise<void> {
   const token = resolveTelegramBotToken();
   if (!token) {
-    log.warn('Telegram bot token not configured; blocked alert kept as Veritas notification only');
+    log.warn(
+      'Hawk Telegram bot token not configured; blocked alert kept as Veritas notification/Discord only'
+    );
+    return;
+  }
+
+  const chatId = resolveTelegramChatId();
+  if (!chatId) {
+    log.warn(
+      'Hawk Telegram chat id not configured; blocked alert kept as Veritas notification/Discord only'
+    );
     return;
   }
 
@@ -245,7 +246,7 @@ async function sendTelegramAlert(message: string, task: Task): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      chat_id: resolveTelegramChatId(),
+      chat_id: chatId,
       text: message,
       disable_web_page_preview: true,
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),

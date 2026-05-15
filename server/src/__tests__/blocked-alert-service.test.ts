@@ -44,7 +44,7 @@ describe('blocked task alerts', () => {
     expect(source).toContain('alertTaskBlocked(updatedTask, previousStatus)');
   });
 
-  it('persists Veritas notifications and sends Telegram without exposing secrets', () => {
+  it('persists Veritas notifications and only sends Telegram through explicit Hawk routing', () => {
     const source = read('services/blocked-alert-service.ts');
 
     expect(source).toContain("new Set<string>(['hawk'])");
@@ -58,7 +58,13 @@ describe('blocked task alerts', () => {
     expect(source).toContain('https://discord.com/api/v10/channels/${channelId}/messages');
     expect(source).toContain('allowed_mentions');
     expect(source).toContain('TELEGRAM_BOT_TOKEN_HAWK');
+    expect(source).toContain('TELEGRAM_CHAT_ID_HAWK');
     expect(source).toContain('/Users/admin/.hermes/profiles/hawk/.env');
+    expect(source).not.toContain('TELEGRAM_BOT_TOKEN_LINK');
+    expect(source).not.toContain('TELEGRAM_CHAT_ID_LINK');
+    expect(source).not.toContain('TELEGRAM_BOT_TOKEN ||');
+    expect(source).not.toContain('TELEGRAM_CHAT_ID ||');
+    expect(source).not.toContain("'8601358413'");
     expect(source).not.toMatch(/console\.log\([^)]*token/i);
   });
 
