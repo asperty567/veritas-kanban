@@ -55,7 +55,7 @@ export async function fireSquadWebhook(
   // Route based on mode. Legacy/non-schema modes are intentionally fail-closed.
   if (settings.mode === 'hermes') {
     await fireHermesGatewayWake(message, settings);
-  } else if (settings.mode === 'webhook' || !settings.mode) {
+  } else if (settings.mode === 'webhook' || settings.mode === 'generic' || !settings.mode) {
     await fireGenericWebhook(message, settings, isHuman);
   } else {
     log.warn({ mode: settings.mode }, 'Squad webhook mode disabled by Hermes cutover');
