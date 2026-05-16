@@ -179,6 +179,8 @@ export interface StepExecutionResult {
   sessionKey?: string; // HermesAgent session key for workflow observability
   runId?: string; // HermesAgent run id for runtime status polling
   status?: string; // HermesAgent run status at dispatch time
+  provider?: string; // Runtime provider that executed the step (hermes-agent, codex-sdk, etc.)
+  usage?: unknown; // Provider token/usage payload for workflow telemetry
 }
 
 // ==================== RBAC & Audit Types ====================

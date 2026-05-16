@@ -160,6 +160,7 @@ export class WorkflowStepExecutor {
       sessionKey,
       runId: gatewayRun.runId,
       status: gatewayRun.status,
+      provider: agentDef?.provider || 'hermes-agent',
     };
   }
 
@@ -285,6 +286,8 @@ export class WorkflowStepExecutor {
       sessionKey: threadId || undefined,
       runId: threadId || undefined,
       status: 'completed',
+      provider: 'codex-sdk',
+      usage,
     };
   }
 
