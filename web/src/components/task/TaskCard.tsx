@@ -434,15 +434,32 @@ export const TaskCard = memo(function TaskCard({
               {!isAgentRunning && assignedProfiles.length > 0 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1">
-                      <Bot className="h-3 w-3" />
-                      Profile: {assignedProfiles.map(getAgentDisplayName).join(', ')}
+                    <span
+                      className={cn(
+                        'text-xs px-1.5 py-0.5 rounded flex items-center gap-1',
+                        task.status === 'done'
+                          ? 'bg-emerald-500/10 text-emerald-400'
+                          : 'bg-blue-500/10 text-blue-400'
+                      )}
+                    >
+                      {task.status === 'done' ? (
+                        <CheckCircle className="h-3 w-3" />
+                      ) : (
+                        <Bot className="h-3 w-3" />
+                      )}
+                      {task.status === 'done' ? 'Completed by' : 'Profile'}:{' '}
+                      {assignedProfiles.map(getAgentDisplayName).join(', ')}
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p className="font-medium">Concrete Hermes profile assignment</p>
+                    <p className="font-medium">
+                      {task.status === 'done'
+                        ? 'Completed profile'
+                        : 'Concrete Hermes profile assignment'}
+                    </p>
                     <p className="text-sm">
-                      Assigned profile{assignedProfiles.length === 1 ? '' : 's'}:{' '}
+                      {task.status === 'done' ? 'Completed by' : 'Assigned profile'}
+                      {task.status === 'done' || assignedProfiles.length === 1 ? '' : 's'}:{' '}
                       {assignedProfiles.map(getAgentDisplayName).join(', ')}
                     </p>
                   </TooltipContent>

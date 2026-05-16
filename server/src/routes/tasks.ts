@@ -60,6 +60,14 @@ const gitSchema = z
     branch: z.string().optional(),
     baseBranch: z.string().optional(),
     worktreePath: z.string().optional(),
+    commitHash: z.string().optional(),
+    remoteRef: z.string().optional(),
+    pushedAt: z.string().optional(),
+    patchArtifactPath: z.string().optional(),
+    prUrl: z.string().optional(),
+    prNumber: z.number().int().positive().optional(),
+    prScreenshotPath: z.string().optional(),
+    prScreenshotUrl: z.string().optional(),
   })
   .optional();
 
@@ -617,6 +625,18 @@ router.post(
     const updated = await taskService.reorderTasks(orderedIds);
     broadcastTaskChange('reordered');
     res.json({ updated: updated.length });
+  })
+);
+
+// POST /api/tasks/blocked-intake-scan - Poll blocked tasks for mechanical brief-quality resolution
+router.post(
+  '/blocked-intake-scan',
+  asyncHandler(async (_req, res) => {
+    const result = await taskService.pollBlockedIntakeResolutions();
+    if (result.requeued.length > 0 || result.annotated.length > 0) {
+      broadcastTaskChange('updated');
+    }
+    res.json(result);
   })
 );
 

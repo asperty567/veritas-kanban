@@ -104,6 +104,36 @@ describe('WorkflowRunService', () => {
     expect(mockBroadcastWorkflowStatus).toHaveBeenCalled();
   });
 
+  it('persists provider-specific runtime telemetry for Codex SDK steps', async () => {
+    mockExecuteStep.mockResolvedValueOnce({
+      output: { done: 'step-1' },
+      outputPath: '/tmp/step-1.json',
+      sessionKey: 'thread_test_123',
+      runId: 'thread_test_123',
+      status: 'completed',
+      provider: 'codex-sdk',
+      usage: { input_tokens: 10, output_tokens: 20 },
+    });
+    mockExecuteStep.mockResolvedValueOnce({
+      output: { done: 'step-2' },
+      outputPath: '/tmp/step-2.json',
+    });
+
+    const run = await service.startRun('wf-1', 'task-1');
+
+    await vi.waitFor(async () => {
+      const saved = await service.getRun(run.id);
+      expect(saved.status).toBe('completed');
+      expect(saved.context._runtimeRuns['step-1']).toMatchObject({
+        provider: 'codex-sdk',
+        runId: 'thread_test_123',
+        sessionKey: 'thread_test_123',
+        status: 'completed',
+        usage: { input_tokens: 10, output_tokens: 20 },
+      });
+    });
+  });
+
   it('handles retry, retry_step, skip, block, and workflow failure', async () => {
     const delaySpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any) => {
       fn();

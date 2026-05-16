@@ -7,7 +7,7 @@ const mockList = vi.fn();
 const mockGetRunMetrics = vi.fn();
 
 vi.mock('../services/agent-registry-service.js', () => ({
-  getAgentRegistryService: () => ({ list: mockList }),
+  getAgentRegistryService: () => ({ runtimeList: mockList }),
 }));
 
 vi.mock('../services/metrics/index.js', () => ({
@@ -53,7 +53,21 @@ describe('SystemHealthService', () => {
     expect(status.signals.agents).toMatchObject({ status: 'ok', total: 0, online: 0, offline: 0 });
   });
 
-  it('degrades level for warnings, offline agents, and low success rate', async () => {
+  it('treats off-shift runtime profiles as healthy when at least one profile is active', async () => {
+    mockList.mockReturnValue([
+      { status: 'online' },
+      { status: 'busy' },
+      { status: 'offline' },
+      { status: 'offline' },
+    ]);
+
+    const mod = await import('../services/system-health-service.js');
+    const status = await new mod.SystemHealthService().getStatus();
+    expect(status.signals.agents).toMatchObject({ status: 'ok', total: 4, online: 2, offline: 2 });
+    expect(status.status).toBe('stable');
+  });
+
+  it('degrades level for infrastructure and operations warnings', async () => {
     memSpy.mockReturnValue({ heapUsed: 95, heapTotal: 100 } as any);
     mockList.mockReturnValue([{ status: 'online' }, { status: 'offline' }]);
     mockGetRunMetrics.mockResolvedValue({ runs: 10, successRate: 0.75, failures: 2, errors: 0 });
@@ -61,7 +75,7 @@ describe('SystemHealthService', () => {
     const mod = await import('../services/system-health-service.js');
     const status = await new mod.SystemHealthService().getStatus();
     expect(status.signals.system.status).toBe('warn');
-    expect(status.signals.agents.status).toBe('warn');
+    expect(status.signals.agents.status).toBe('ok');
     expect(status.signals.operations.status).toBe('warn');
     expect(status.status).toBe('drifting');
   });

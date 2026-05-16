@@ -18,6 +18,7 @@ import type {
   TaskPriority,
 } from '@veritas-kanban/shared';
 import { getTelemetryService, type TelemetryService } from './telemetry-service.js';
+import { alertTaskBlocked } from './blocked-alert-service.js';
 import { ConfigService } from './config-service.js';
 import { withFileLock } from './file-lock.js';
 import { createLogger } from '../lib/logger.js';
@@ -39,6 +40,7 @@ import {
   type TaskSyncContext,
 } from './agent-registry-service.js';
 import { getTasksActiveDir, getTasksArchiveDir } from '../utils/paths.js';
+import { getAutomationService, type BlockedIntakeResolution } from './automation-service.js';
 import { getRepoHygieneService } from './repo-hygiene-service.js';
 
 const log = createLogger('task-cache');
@@ -47,6 +49,12 @@ const TASK_RECONCILE_CONTEXT: TaskSyncContext = createTaskSyncToken('task-reconc
 const execFileAsync = promisify(execFileCallback);
 const GIT_DISCIPLINE_CODE = 'GIT_DISCIPLINE_GATE';
 const REPO_HYGIENE_CODE = 'REPO_HYGIENE_GATE';
+const GIT_DISCIPLINE_SECTION = `## Dependencies / Blockers
+
+- Skills dependency: github-pr-workflow
+- Skills dependency: github-auth when push/PR auth may be needed
+- Blocker: if profile-aware GitHub auth, push, PR creation, or screenshot capture is unavailable, move this task to Blocked instead of Done.
+- Done evidence required: clean/declared git status, commit hash, pushed branch or PR-ready patch artifact, PR URL when created, and PR screenshot proof for every PR.`;
 
 /**
  * Task ID format validation
@@ -91,6 +99,46 @@ function buildTaskWithMergedUpdates(
   };
 }
 
+function isCodeTask(taskOrType: Pick<Task, 'type'> | string | undefined): boolean {
+  const type = typeof taskOrType === 'string' ? taskOrType : taskOrType?.type;
+  return CODE_TASK_TYPES.includes((type ?? '').toLowerCase());
+}
+
+function hasGitDisciplineBrief(description: string | undefined): boolean {
+  const text = description ?? '';
+  return (
+    text.includes('Skills dependency: github-pr-workflow') &&
+    text.includes('Skills dependency: github-auth')
+  );
+}
+
+function withGitDisciplineBrief(description: string | undefined): string {
+  const base = (description ?? '').trim();
+  if (hasGitDisciplineBrief(base)) return base;
+  return base ? `${base}\n\n${GIT_DISCIPLINE_SECTION}` : GIT_DISCIPLINE_SECTION;
+}
+
+function throwGitDisciplineError(message: string, path: Array<string | number> = ['git']): never {
+  throw new ValidationError(message, [{ code: GIT_DISCIPLINE_CODE, message, path }]);
+}
+
+function hasPrScreenshotProof(task: Task): boolean {
+  const git = task.git as
+    | (Task['git'] & { prScreenshotPath?: string; prScreenshotUrl?: string })
+    | undefined;
+  if (git?.prScreenshotPath || git?.prScreenshotUrl) return true;
+
+  const deliverables = task.deliverables ?? [];
+  return deliverables.some((deliverable) => {
+    if (!['attached', 'reviewed', 'accepted'].includes(deliverable.status)) return false;
+    const text = [deliverable.title, deliverable.description, deliverable.path]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return text.includes('screenshot') && (text.includes('pr') || text.includes('pull request'));
+  });
+}
+
 async function getGitStatusPorcelain(worktreePath: string): Promise<string> {
   const { stdout } = await execFileAsync(
     'git',
@@ -101,7 +149,50 @@ async function getGitStatusPorcelain(worktreePath: string): Promise<string> {
 }
 
 async function assertCompletionDiscipline(task: Task): Promise<void> {
-  const worktreePath = task.git?.worktreePath ?? task.git?.repo;
+  if (!isCodeTask(task)) return;
+
+  const git = task.git as
+    | (Task['git'] & {
+        commitHash?: string;
+        remoteRef?: string;
+        pushedAt?: string;
+        patchArtifactPath?: string;
+        prScreenshotPath?: string;
+        prScreenshotUrl?: string;
+      })
+    | undefined;
+
+  const commitHash = git?.commitHash?.trim();
+  if (!commitHash || !/^[a-f0-9]{7,40}$/i.test(commitHash)) {
+    throwGitDisciplineError(
+      'Git Discipline Gate: code task completion requires a valid commit hash. If work cannot be pushed or PR-ready, move the task to Blocked instead of Done.',
+      ['git', 'commitHash']
+    );
+  }
+
+  const hasRemoteOrArtifact = Boolean(
+    git?.remoteRef?.trim() ||
+    git?.pushedAt?.trim() ||
+    git?.prUrl?.trim() ||
+    git?.prNumber ||
+    git?.patchArtifactPath?.trim()
+  );
+  if (!hasRemoteOrArtifact) {
+    throwGitDisciplineError(
+      'Git Discipline Gate: code task completion requires remote preservation (pushed branch/PR) or a PR-ready patch artifact. If auth/push is unavailable, move the task to Blocked instead of Done.',
+      ['git', 'remoteRef']
+    );
+  }
+
+  const hasPr = Boolean(git?.prUrl?.trim() || git?.prNumber);
+  if (hasPr && !hasPrScreenshotProof(task)) {
+    throwGitDisciplineError(
+      'Git Discipline Gate: every PR requires screenshot proof of the PR/checks page before the task can move to Done.',
+      ['git', 'prScreenshotPath']
+    );
+  }
+
+  const worktreePath = git?.worktreePath ?? (git?.repo?.startsWith('/') ? git.repo : undefined);
   if (!worktreePath) return;
 
   try {
@@ -114,13 +205,7 @@ async function assertCompletionDiscipline(task: Task): Promise<void> {
         .map((line) => line.trim())
         .join(', ');
       const message = `Git Discipline Gate: dirty worktree blocks task completion at ${worktreePath}. Commit, PR/stash, or revert first. Changes: ${changedFiles}`;
-      throw new ValidationError(message, [
-        {
-          code: GIT_DISCIPLINE_CODE,
-          message,
-          path: ['git', 'worktreePath'],
-        },
-      ]);
+      throwGitDisciplineError(message, ['git', 'worktreePath']);
     }
   } catch (err) {
     if (err instanceof ValidationError) {
@@ -128,13 +213,7 @@ async function assertCompletionDiscipline(task: Task): Promise<void> {
     }
     const detail = err instanceof Error ? err.message : String(err);
     const message = `Git Discipline Gate: unable to verify git worktree before task completion at ${worktreePath}: ${detail}`;
-    throw new ValidationError(message, [
-      {
-        code: GIT_DISCIPLINE_CODE,
-        message,
-        path: ['git', 'worktreePath'],
-      },
-    ]);
+    throwGitDisciplineError(message, ['git', 'worktreePath']);
   }
 }
 
@@ -204,6 +283,16 @@ export interface ClaimRunnableTaskResult {
   reason?: string;
 }
 
+export interface BlockedIntakePollResult {
+  checked: number;
+  requeued: string[];
+  annotated: string[];
+  judgmentBlocked: string[];
+  ignored: string[];
+  resolutions: BlockedIntakeResolution[];
+  running?: boolean;
+}
+
 /** Ignore file-watcher events within this window after our own writes */
 const WRITE_DEBOUNCE_MS = 200;
 
@@ -221,6 +310,7 @@ export class TaskService {
   private cacheStats = { hits: 0, misses: 0 };
   private taskSyncReconcileInterval: ReturnType<typeof setInterval> | null = null;
   private reconcileRunning = false;
+  private blockedIntakePollRunning = false;
 
   constructor(options: TaskServiceOptions = {}) {
     this.tasksDir = options.tasksDir || DEFAULT_TASKS_DIR;
@@ -650,6 +740,89 @@ export class TaskService {
     }
   }
 
+  private async appendHawkProgressOnce(taskId: string, note: string): Promise<void> {
+    if (!note) return;
+    const { getProgressService } = await import('./progress-service.js');
+    const progressService = getProgressService();
+    const existing = await progressService.getProgress(taskId);
+    if (existing?.includes(note)) return;
+    await progressService.appendProgress(taskId, 'Hawk Blocked Intake Poll', note);
+  }
+
+  async pollBlockedIntakeResolutions(): Promise<BlockedIntakePollResult> {
+    if (this.blockedIntakePollRunning) {
+      return {
+        checked: 0,
+        requeued: [],
+        annotated: [],
+        judgmentBlocked: [],
+        ignored: [],
+        resolutions: [],
+        running: true,
+      };
+    }
+
+    this.blockedIntakePollRunning = true;
+    const result: BlockedIntakePollResult = {
+      checked: 0,
+      requeued: [],
+      annotated: [],
+      judgmentBlocked: [],
+      ignored: [],
+      resolutions: [],
+    };
+
+    try {
+      const automation = getAutomationService();
+      const blockedTasks = (await this.listTasks()).filter((task) => task.status === 'blocked');
+      result.checked = blockedTasks.length;
+
+      for (const task of blockedTasks) {
+        const resolution = automation.planBlockedIntakeResolution(task);
+        result.resolutions.push(resolution);
+
+        if (resolution.action === 'ignored') {
+          result.ignored.push(task.id);
+          continue;
+        }
+
+        await this.appendHawkProgressOnce(task.id, resolution.progressNote);
+
+        if (resolution.action === 'judgment-blocked') {
+          result.judgmentBlocked.push(task.id);
+          continue;
+        }
+
+        if (resolution.action === 'annotated') {
+          result.annotated.push(task.id);
+          if (
+            resolution.enrichedDescription &&
+            resolution.enrichedDescription !== task.description
+          ) {
+            await this.updateTask(task.id, { description: resolution.enrichedDescription });
+          }
+          continue;
+        }
+
+        if (resolution.action === 'requeued') {
+          result.requeued.push(task.id);
+          await this.updateTask(task.id, {
+            ...(resolution.enrichedDescription &&
+            resolution.enrichedDescription !== task.description
+              ? { description: resolution.enrichedDescription }
+              : {}),
+            status: 'todo',
+            blockedReason: null,
+          });
+        }
+      }
+
+      return result;
+    } finally {
+      this.blockedIntakePollRunning = false;
+    }
+  }
+
   async listTasks(): Promise<Task[]> {
     await this.initCache();
     return this.cacheList();
@@ -685,6 +858,21 @@ export class TaskService {
   async getTask(id: string): Promise<Task | null> {
     await this.initCache();
     return this.cacheGet(id) ?? null;
+  }
+
+  private async ensureGitDisciplineBriefsBeforeDispatch(tasks: Task[]): Promise<Task[]> {
+    const patched = new Map<string, Task>();
+
+    for (const task of tasks) {
+      if (!isCodeTask(task) || hasGitDisciplineBrief(task.description)) continue;
+      const updated = await this.updateTask(task.id, {
+        description: withGitDisciplineBrief(task.description),
+      });
+      if (updated) patched.set(task.id, updated);
+    }
+
+    if (patched.size === 0) return tasks;
+    return tasks.map((task) => patched.get(task.id) ?? task);
   }
 
   private isClaimLeaseExpired(task: Task, nowMs: number): boolean {
@@ -763,7 +951,7 @@ export class TaskService {
   }
 
   async selectRunnableTasks(selector: RunnableTaskSelectorInput = {}): Promise<Task[]> {
-    const tasks = await this.listTasks();
+    const tasks = await this.ensureGitDisciplineBriefsBeforeDispatch(await this.listTasks());
     return this.selectRunnableTasksFromList(tasks, selector, Date.now());
   }
 
@@ -783,7 +971,7 @@ export class TaskService {
 
     const selectorLockPath = path.join(this.tasksDir, '.router-claim.lock');
     await withFileLock(selectorLockPath, async () => {
-      const tasks = await this.listTasks();
+      const tasks = await this.ensureGitDisciplineBriefsBeforeDispatch(await this.listTasks());
       const nowMs = Date.now();
       const existingClaim = tasks.find(
         (task) =>
@@ -867,7 +1055,9 @@ export class TaskService {
     const task: Task = {
       id: this.generateId(),
       title: input.title,
-      description: input.description || '',
+      description: isCodeTask(input.type || 'code')
+        ? withGitDisciplineBrief(input.description)
+        : input.description || '',
       type: input.type || 'code',
       status: 'todo',
       priority: input.priority || 'medium',
@@ -946,6 +1136,7 @@ export class TaskService {
     const filepath = path.join(this.tasksDir, newFilename);
 
     let updatedTask!: Task;
+    let shouldPollBlockedIntake = false;
 
     await withFileLock(filepath, async () => {
       // Re-read from cache inside the lock to get the latest state.
@@ -974,8 +1165,8 @@ export class TaskService {
 
         // Check requireDeliverableForDone setting
         if (input.status === 'done') {
-          await assertCompletionDiscipline(completionPreviewTask);
           await assertRepoHygieneCompletionGate();
+          await assertCompletionDiscipline(completionPreviewTask);
 
           if (settings.tasks.requireDeliverableForDone) {
             const deliverables = input.deliverables ?? freshTask.deliverables ?? [];
@@ -1178,6 +1369,13 @@ export class TaskService {
           });
         }
 
+        if (updatedTask.status === 'blocked' && previousStatus !== 'blocked') {
+          shouldPollBlockedIntake = true;
+          alertTaskBlocked(updatedTask, previousStatus).catch((err) => {
+            log.warn({ taskId: updatedTask.id }, 'Blocked task alert failed: %s', err);
+          });
+        }
+
         // Enforcement: Auto-telemetry emission (run.started/run.completed)
         const autoTelemetry = settings?.enforcement?.autoTelemetry === true;
 
@@ -1270,6 +1468,12 @@ export class TaskService {
         });
       }
     });
+
+    if (shouldPollBlockedIntake) {
+      this.pollBlockedIntakeResolutions().catch((err) => {
+        log.warn({ err, taskId: updatedTask.id }, 'Blocked intake poll failed');
+      });
+    }
 
     return updatedTask;
   }

@@ -221,6 +221,14 @@ describe('TaskCard', () => {
     expect(screen.getByText('Profile: Aura')).toBeDefined();
   });
 
+  it('labels done task profile badges as completed, not active profile routing', () => {
+    const task = createMockTask({ status: 'done', agent: 'hawk', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Completed by: Hawk')).toBeDefined();
+    expect(screen.queryByText('Profile: Hawk')).toBeNull();
+    expect(screen.queryByText(/Hawk running/)).toBeNull();
+  });
+
   it('shows concrete attempt profile/status when execution is running', () => {
     const task = createMockTask({
       agent: 'auto',
