@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-05-11
+
+### Security
+
+- Restricted policy create, update, and delete routes to admin role only (#357).
+- Restricted tool policy create, update, delete, and validation routes to admin role only (#355).
+- Restricted agent permission level changes, permission field updates, and approval review to admin authority (#356).
+- Restricted task-to-agent routing configuration updates to admin role only (#354).
+
+### Changed
+
+- Updated workspace package versions, README badge, and MCP README footer from `4.3.0` to `4.3.1`.
+
 ## [4.3.0] - 2026-05-09
 
 ### Added

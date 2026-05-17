@@ -9,11 +9,76 @@ export interface DevServerConfig {
   readyPattern?: string; // Regex pattern to detect when server is ready
 }
 
+export interface RepoHygienePolicy {
+  /** Include this repository in native hygiene scans. Defaults to true. */
+  enabled?: boolean;
+  /** Treat hygiene failures as operationally critical. Defaults to true. */
+  critical?: boolean;
+  /** Block task completion when this repo has blocking hygiene failures. Defaults to true. */
+  enforceOnDone?: boolean;
+  /** Expected checked-out branch. Leave unset to allow any clean non-detached branch. */
+  expectedBranch?: string;
+  /** Branch names treated as protected for active local work. Defaults to RepoConfig.defaultBranch plus main/master/production. */
+  protectedBranches?: string[];
+  /** Allow dirty/ahead local work directly on protected branches. Defaults to false. */
+  allowProtectedBranch?: boolean;
+  /** Allow modified/untracked files. Defaults to false. */
+  allowDirty?: boolean;
+  /** Allow local commits ahead of upstream. Defaults to false. */
+  allowAhead?: boolean;
+  /** Allow local branch to lag upstream. Defaults to false. */
+  allowBehind?: boolean;
+  /** Allow detached HEAD state. Defaults to false. */
+  allowDetachedHead?: boolean;
+  /** Allow repositories without a configured upstream. Defaults to false. */
+  allowNoUpstream?: boolean;
+}
+
+export interface RepoHygieneIssue {
+  code: string;
+  severity: 'blocking' | 'warning';
+  message: string;
+}
+
+export interface RepoHygieneRepoStatus {
+  repoName: string;
+  path: string;
+  healthy: boolean;
+  blocking: boolean;
+  branch: string | null;
+  expectedBranch: string | null;
+  protectedBranch: boolean;
+  protectedBranches: string[];
+  dirty: boolean;
+  untrackedCount: number;
+  modifiedCount: number;
+  ahead: number;
+  behind: number;
+  detachedHead: boolean;
+  hasUpstream: boolean;
+  issues: RepoHygieneIssue[];
+  scannedAt: string;
+}
+
+export interface RepoHygieneSummary {
+  healthy: boolean;
+  blockingRepos: number;
+  warningRepos: number;
+  totalRepos: number;
+}
+
+export interface RepoHygieneState {
+  scannedAt: string;
+  summary: RepoHygieneSummary;
+  repos: RepoHygieneRepoStatus[];
+}
+
 export interface RepoConfig {
   name: string;
   path: string;
   defaultBranch: string;
   devServer?: DevServerConfig;
+  hygiene?: RepoHygienePolicy;
 }
 
 export interface AgentConfig {
@@ -22,7 +87,7 @@ export interface AgentConfig {
   command: string;
   args: string[];
   enabled: boolean;
-  provider?: 'openclaw' | 'codex-cli' | 'codex-sdk' | 'codex-cloud' | 'custom';
+  provider?: 'hermes-agent' | 'codex-cli' | 'codex-sdk' | 'codex-cloud' | 'custom';
   model?: string;
 }
 

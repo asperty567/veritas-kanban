@@ -86,9 +86,7 @@ describe('AutomationService', () => {
     });
 
     it('should return empty when no running tasks', () => {
-      const tasks = [
-        mockTask({ id: 't1', type: 'automation', status: 'todo' }),
-      ];
+      const tasks = [mockTask({ id: 't1', type: 'automation', status: 'todo' })];
       expect(service.getRunningTasks(tasks)).toHaveLength(0);
     });
   });
@@ -134,23 +132,23 @@ describe('AutomationService', () => {
 
     it('should filter by pending', () => {
       const result = service.filterTasks(tasks, { pending: true });
-      expect(result.some(t => t.id === 'pending')).toBe(true);
+      expect(result.some((t) => t.id === 'pending')).toBe(true);
     });
 
     it('should filter by running', () => {
       const result = service.filterTasks(tasks, { running: true });
-      expect(result.some(t => t.id === 'running')).toBe(true);
+      expect(result.some((t) => t.id === 'running')).toBe(true);
     });
 
     it('should filter by failed', () => {
       const result = service.filterTasks(tasks, { failed: true });
-      expect(result.some(t => t.id === 'failed')).toBe(true);
+      expect(result.some((t) => t.id === 'failed')).toBe(true);
     });
 
     it('should combine filters and deduplicate', () => {
       // failed task also appears in pending (blocked + veritas + failed)
       const result = service.filterTasks(tasks, { pending: true, failed: true });
-      const ids = result.map(t => t.id);
+      const ids = result.map((t) => t.id);
       // Should not have duplicates
       expect(new Set(ids).size).toBe(ids.length);
     });
@@ -256,6 +254,81 @@ describe('AutomationService', () => {
       const result = service.buildCompleteResult(task, 'complete');
       expect(result.taskId).toBe('task_xyz');
       expect(result.status).toBe('complete');
+    });
+  });
+
+  describe('blocked intake resolution', () => {
+    it('requeues mechanical brief-quality blocks only when file paths and done when are explicit', () => {
+      const task = mockTask({
+        id: 'intake-ready',
+        status: 'blocked',
+        type: 'code',
+        description:
+          'Fix server/src/routes/tasks.ts.\nDONE WHEN: tsc --noEmit passes and blocked intake route returns requeued task IDs.',
+        blockedReason: {
+          category: 'other',
+          note: 'dispatcher rejected brief_quality: missing polish',
+        },
+      });
+
+      const plan = service.planBlockedIntakeResolution(task);
+
+      expect(plan.action).toBe('requeued');
+      expect(plan.filePaths).toContain('server/src/routes/tasks.ts');
+      expect(plan.acceptanceCriteria[0]).toContain('DONE WHEN');
+      expect(plan.enrichedDescription).toContain('## Hawk execution brief');
+    });
+
+    it('keeps mechanical blocks blocked with a visible note when required fields are missing', () => {
+      const task = mockTask({
+        id: 'intake-missing',
+        status: 'blocked',
+        type: 'code',
+        description: 'Fix the thing Andy just added.',
+        blockedReason: {
+          category: 'other',
+          note: 'dispatcher rejected brief quality: missing file paths and Done When',
+        },
+      });
+
+      const plan = service.planBlockedIntakeResolution(task);
+
+      expect(plan.action).toBe('annotated');
+      expect(plan.missingFields).toEqual([
+        'explicit file paths',
+        'acceptance criteria / DONE WHEN',
+      ]);
+      expect(plan.progressNote).toContain('task remains blocked');
+      expect(plan.enrichedDescription).toContain('MISSING: add explicit file paths');
+    });
+
+    it('leaves strategy, credential, publishing, restart, and approval tasks blocked', () => {
+      const task = mockTask({
+        id: 'intake-risk',
+        status: 'blocked',
+        type: 'code',
+        description:
+          'Publish customer-facing campaign after getting OAuth token. File: server/src/routes/tasks.ts. DONE WHEN: campaign is live.',
+        blockedReason: { category: 'other', note: 'brief_quality rejection' },
+      });
+
+      const plan = service.planBlockedIntakeResolution(task);
+
+      expect(plan.action).toBe('judgment-blocked');
+      expect(plan.progressNote).toContain('must stay blocked');
+    });
+
+    it('ignores blocked tasks that are not dispatcher brief-quality rejections', () => {
+      const task = mockTask({
+        id: 'real-blocker',
+        status: 'blocked',
+        blockedReason: {
+          category: 'prerequisite',
+          note: 'waiting for upstream API outage to clear',
+        },
+      });
+
+      expect(service.planBlockedIntakeResolution(task).action).toBe('ignored');
     });
   });
 

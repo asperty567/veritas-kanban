@@ -187,7 +187,10 @@ function mergeWithHermesRuntimeRoster(agents: RegisteredAgent[]): RegisteredAgen
       }),
       id,
       name: HERMES_AGENT_DISPLAY_NAMES[id as keyof typeof HERMES_AGENT_DISPLAY_NAMES],
-      status: runningProfiles.has(id) && existing?.status === 'busy' ? 'busy' : runtimeStatus,
+      // Task lifecycle truth must win over runtime-roster defaults. A profile can be
+      // outside the always-on runtime set but still have an explicitly assigned
+      // in-progress task; do not render that as off-shift while preserving task linkage.
+      status: existing?.status === 'busy' ? 'busy' : runtimeStatus,
       capabilities: existing?.capabilities ?? [],
       registeredAt: existing?.registeredAt ?? now,
       lastHeartbeat: runningProfiles.has(id) ? now : (existing?.lastHeartbeat ?? now),

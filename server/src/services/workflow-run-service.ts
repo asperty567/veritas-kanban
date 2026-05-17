@@ -194,14 +194,19 @@ export class WorkflowRunService {
           // Merge step output into run context
           run.context[step.id] = result.output;
           if (result.runId) {
+            const runtimeRun: Record<string, unknown> = {
+              provider: result.provider || 'hermes-agent',
+              runId: result.runId,
+              sessionKey: result.sessionKey,
+              status: result.status,
+            };
+            if (result.usage !== undefined) {
+              runtimeRun.usage = result.usage;
+            }
+
             run.context._runtimeRuns = {
               ...((run.context._runtimeRuns as Record<string, unknown> | undefined) ?? {}),
-              [step.id]: {
-                provider: 'hermes-agent',
-                runId: result.runId,
-                sessionKey: result.sessionKey,
-                status: result.status,
-              },
+              [step.id]: runtimeRun,
             };
           }
 

@@ -96,6 +96,18 @@ export class WorkflowStepExecutor {
       .filter(Boolean)
       .join('\n');
 
+    if (agentDef?.provider === 'codex-sdk') {
+      return this.executeCodexSdkStep({
+        step,
+        run,
+        agentDef,
+        sessionConfig,
+        prompt,
+        sessions,
+        existingSessionKey,
+      });
+    }
+
     log.info(
       {
         runId: run.id,
@@ -148,7 +160,157 @@ export class WorkflowStepExecutor {
       sessionKey,
       runId: gatewayRun.runId,
       status: gatewayRun.status,
+      provider: agentDef?.provider || 'hermes-agent',
     };
+  }
+
+  private async executeCodexSdkStep(params: {
+    step: WorkflowStep;
+    run: WorkflowRun;
+    agentDef: WorkflowAgent;
+    sessionConfig: StepSessionConfig;
+    prompt: string;
+    sessions: Record<string, string>;
+    existingSessionKey?: string;
+  }): Promise<StepExecutionResult> {
+    const { step, run, agentDef, sessionConfig, prompt, sessions, existingSessionKey } = params;
+    const { Codex } = await import('@openai/codex-sdk');
+    const codex = new Codex({ env: this.buildCodexEnv() });
+    const workingDirectory = this.resolveCodexWorkingDirectory(run);
+    const reuseThreadId = sessionConfig.mode === 'reuse' ? existingSessionKey : undefined;
+    const shouldReuse = Boolean(reuseThreadId);
+    const thread = shouldReuse
+      ? codex.resumeThread(reuseThreadId as string)
+      : codex.startThread({
+          workingDirectory,
+          skipGitRepoCheck: true,
+          sandboxMode: 'workspace-write',
+          approvalPolicy: 'on-request',
+          networkAccessEnabled: true,
+          model: agentDef.model,
+        });
+
+    log.info(
+      {
+        runId: run.id,
+        stepId: step.id,
+        agent: step.agent,
+        provider: agentDef.provider,
+        model: agentDef.model,
+        workingDirectory,
+        sessionMode: sessionConfig.mode,
+        reusingThread: shouldReuse,
+      },
+      'Starting Codex SDK workflow step run'
+    );
+
+    const streamed = await thread.runStreamed(prompt);
+    let threadId = shouldReuse ? existingSessionKey || '' : '';
+    const finalMessages: string[] = [];
+    let failureMessage = '';
+    let usage: unknown;
+
+    for await (const event of streamed.events) {
+      if (!event || typeof event !== 'object') continue;
+      const typedEvent = event as {
+        type?: string;
+        thread_id?: string;
+        item?: { type?: string; text?: string };
+        usage?: unknown;
+        error?: { message?: string } | string;
+        message?: string;
+      };
+      if (typedEvent.type === 'thread.started' && typeof typedEvent.thread_id === 'string') {
+        threadId = typedEvent.thread_id;
+      }
+      if (typedEvent.type === 'item.completed') {
+        const item = typedEvent.item;
+        if (item?.type === 'agent_message' && typeof item.text === 'string') {
+          finalMessages.push(item.text);
+        }
+      }
+      if (typedEvent.type === 'turn.completed') {
+        usage = typedEvent.usage;
+      }
+      if (typedEvent.type === 'turn.failed') {
+        const error = typedEvent.error;
+        failureMessage =
+          typeof error === 'string' ? error : error?.message || 'Codex workflow step failed';
+      }
+      if (typedEvent.type === 'error') {
+        failureMessage = typedEvent.message || 'Codex workflow step failed';
+      }
+    }
+
+    if (failureMessage) {
+      throw new Error(`Codex workflow step failed: ${failureMessage}`);
+    }
+
+    const finalResponse = finalMessages.join('\n\n').trim();
+    if (!finalResponse) {
+      throw new Error('Codex workflow step completed without an agent message');
+    }
+
+    if (step.agent && threadId) {
+      sessions[step.agent] = threadId;
+      run.context._sessions = sessions;
+    }
+
+    const result = [
+      `Codex SDK workflow step completed for ${step.id}`,
+      '',
+      `Workflow Run: ${run.id}`,
+      threadId ? `Codex Thread: ${threadId}` : undefined,
+      `Agent: ${step.agent || 'unassigned'}`,
+      `Role: ${agentDef.role || 'unknown'}`,
+      agentDef.model ? `Model: ${agentDef.model}` : undefined,
+      usage ? `Usage: ${JSON.stringify(usage)}` : undefined,
+      '',
+      finalResponse,
+      '',
+      'STATUS: done',
+      'OUTPUT: Codex SDK workflow step completed and recorded by Veritas',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const parsed = this.parseStepOutput(result, step);
+    await this.validateAcceptanceCriteria(step, result, parsed);
+
+    const outputPath = await this.saveStepOutput(run.id, step.id, result, step.output?.file);
+    await this.appendProgressFile(run.id, step.id, result);
+
+    return {
+      output: parsed,
+      outputPath,
+      sessionKey: threadId || undefined,
+      runId: threadId || undefined,
+      status: 'completed',
+      provider: 'codex-sdk',
+      usage,
+    };
+  }
+
+  private resolveCodexWorkingDirectory(run: WorkflowRun): string {
+    const task = run.context.task as { git?: { worktreePath?: string } } | undefined;
+    const worktreePath = task?.git?.worktreePath;
+    if (worktreePath) return this.expandHome(worktreePath);
+    return process.cwd();
+  }
+
+  private expandHome(p: string): string {
+    if (p === '~') return process.env.HOME || p;
+    if (p.startsWith('~/')) return path.join(process.env.HOME || '', p.slice(2));
+    return p;
+  }
+
+  private buildCodexEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (typeof value === 'string') env[key] = value;
+    }
+    env.VK_API_URL = process.env.VK_API_URL || 'http://localhost:3001';
+    return env;
   }
 
   private getSessionMap(run: WorkflowRun): Record<string, string> {

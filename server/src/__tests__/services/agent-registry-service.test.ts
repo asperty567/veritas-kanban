@@ -696,12 +696,35 @@ describe('AgentRegistryService', () => {
         'orbit',
         'signal',
         'helm',
+        'scops',
       ]);
       expect(agents.find((agent) => agent.id === 'ops')).toBeUndefined();
       expect(agents.find((agent) => agent.id === 'default')?.status).toBe('online');
       expect(agents.find((agent) => agent.id === 'hawk')?.status).toBe('online');
       expect(agents.find((agent) => agent.id === 'blitz')?.status).toBe('online');
       expect(agents.find((agent) => agent.id === 'aura')?.status).toBe('offline');
+    });
+
+    it('runtime list preserves busy task truth for profiles outside always-on runtime set', () => {
+      const service = getAgentRegistryService();
+      service.register({ id: 'aura', name: 'Aura', capabilities: [{ name: 'frontend' }] });
+      service.syncFromTask(
+        {
+          agentRef: 'aura',
+          taskId: 'task_20260512_4Ky3Oy',
+          taskTitle: 'SpaScribe V1: implement Beauty Line prescription output screen',
+          taskStatus: 'in-progress',
+        },
+        TASK_SYNC_CONTEXT
+      );
+
+      const aura = service.runtimeList().find((agent) => agent.id === 'aura');
+
+      expect(aura?.status).toBe('busy');
+      expect(aura?.currentTaskId).toBe('task_20260512_4Ky3Oy');
+      expect(aura?.currentTaskTitle).toBe(
+        'SpaScribe V1: implement Beauty Line prescription output screen'
+      );
     });
 
     it('runtimeStats counts HermesAgent profiles, not historical registry rows', () => {
@@ -711,9 +734,9 @@ describe('AgentRegistryService', () => {
 
       const stats = service.runtimeStats();
 
-      expect(stats.total).toBe(9);
+      expect(stats.total).toBe(10);
       expect(stats.online).toBe(3);
-      expect(stats.offline).toBe(6);
+      expect(stats.offline).toBe(7);
       expect(stats.capabilities).not.toContain('legacy');
     });
   });

@@ -221,6 +221,14 @@ describe('TaskCard', () => {
     expect(screen.getByText('Profile: Aura')).toBeDefined();
   });
 
+  it('labels done task profile badges as completed, not active profile routing', () => {
+    const task = createMockTask({ status: 'done', agent: 'hawk', attempt: undefined });
+    renderCard(task);
+    expect(screen.getByText('Completed by: Hawk')).toBeDefined();
+    expect(screen.queryByText('Profile: Hawk')).toBeNull();
+    expect(screen.queryByText(/Hawk running/)).toBeNull();
+  });
+
   it('shows concrete attempt profile/status when execution is running', () => {
     const task = createMockTask({
       agent: 'auto',
@@ -279,6 +287,29 @@ describe('TaskCard', () => {
     expect(screen.getByText(/Hermes running/)).toBeDefined();
     expect(screen.queryByText(/default running/i)).toBeNull();
     expect(screen.queryByText(/Veritas running/)).toBeNull();
+  });
+
+  it('does not show a running badge for a done task with stale attempt metadata', () => {
+    const task = createMockTask({
+      status: 'done',
+      agent: 'hawk',
+      attempt: {
+        id: 'claim_mc-veritas-hawk-next-1',
+        agent: 'hawk',
+        status: 'running',
+        started: '2026-05-11T12:00:00Z',
+      },
+      claim: {
+        agent: 'hawk',
+        sessionId: 'mc-veritas-hawk-next-1',
+        claimedAt: '2026-05-11T12:00:00Z',
+        leaseExpiresAt: '2026-05-11T12:30:00Z',
+      },
+    });
+
+    renderCard(task);
+
+    expect(screen.queryByText(/Hawk running/)).toBeNull();
   });
 
   it('shows subtask progress', () => {

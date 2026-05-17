@@ -794,4 +794,4 @@ The `findTask` utility matches the last N characters of a task ID (minimum 6). I
 
 ---
 
-_Last updated: 2026-05-09 · VK v4.3.0 · 36 tools / 8 categories_
+_Last updated: 2026-05-11 · VK v4.3.1 · 36 tools / 8 categories_

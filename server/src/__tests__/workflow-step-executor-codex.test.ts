@@ -108,5 +108,16 @@ describe('WorkflowStepExecutor Codex integration', () => {
     expect(run.context._sessions).toMatchObject({ codex: 'thread_test_123' });
     expect(result.output).toContain('Implemented workflow Codex step.');
     expect(result.outputPath).toContain('implement.md');
+    expect(result).toMatchObject({
+      provider: 'codex-sdk',
+      runId: 'thread_test_123',
+      sessionKey: 'thread_test_123',
+      status: 'completed',
+      usage: {
+        input_tokens: 10,
+        output_tokens: 20,
+        reasoning_output_tokens: 5,
+      },
+    });
   });
 });

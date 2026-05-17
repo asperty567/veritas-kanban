@@ -126,7 +126,7 @@ export function SystemHealthBar() {
   // Build concise inline summary
   const summaryParts: string[] = [];
   if (agents.total > 0) {
-    summaryParts.push(`${agents.online} agent${agents.online !== 1 ? 's' : ''} online`);
+    summaryParts.push(`${agents.online} active agent${agents.online !== 1 ? 's' : ''}`);
   }
   if (operations.recentRuns > 0) {
     summaryParts.push(`${Math.round(operations.successRate)}% success rate`);
@@ -153,7 +153,9 @@ export function SystemHealthBar() {
 
         {summary && (
           <>
-            <span className="opacity-40" aria-hidden="true">|</span>
+            <span className="opacity-40" aria-hidden="true">
+              |
+            </span>
             <span className="opacity-75">{summary}</span>
           </>
         )}
@@ -190,9 +192,9 @@ export function SystemHealthBar() {
                 Agents
               </div>
               <ul className="space-y-0.5 text-muted-foreground" aria-label="Agent status">
-                <li>Total: {agents.total}</li>
-                <li>Online: {agents.online}</li>
-                <li>Offline: {agents.offline}</li>
+                <li>Total roster: {agents.total}</li>
+                <li>Active: {agents.online}</li>
+                <li>Off-shift: {agents.offline}</li>
               </ul>
             </div>
 
